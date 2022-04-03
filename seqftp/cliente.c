@@ -8,6 +8,8 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 
+#define BUFF_SIZE 100
+
 //Funcion que se llama en validar_ip()
 int validar_nro(char *str){
 	while(*str){
@@ -50,12 +52,85 @@ int validar_ip(char *ip){
 	return 1;
 }
 
+//ENVIO LOS DATOS AL SERVIDOR
+void send_msg(int sd, char *oper, char *param){
+	
+	char buff[BUFF_SIZE];
+
+	if(param != NULL){
+		sprintf(buff, "%s %s\r\n",oper,param);
+	}
+	else{
+		sprintf(buff, "%s\r\n",oper);
+	}
+
+	//debo enviar el comando al servidor
+	if(write(sd,buff,sizeof(buff)) == -1){
+		printf("Error: no se pudo enviar el mensaje dentro de la funcion send_msg().\n");
+                exit(-1);
+	}
+
+	memset(buff,0,sizeof(buff));
+}
+
+//LEO LO QUE EL CLIENTE INGRESE POR TECLADO
+char* read_input(){
+
+	char *input = malloc(BUFF_SIZE);
+	if(fgets(input,BUFF_SIZE,stdin)){
+		return strtok(input,"\n");
+	}
+	return NULL;
+}
+
+
+void authenticate(int sd){
+	
+	char *input;
+	char buf[BUFF_SIZE];
+
+	//ENVIO EL NOMBRE DEL USUARIO AL SERVIDOR
+	printf("Nombre de usuario: ");
+	input = read_input();
+	
+	send_msg(sd,"USER",input);
+
+	free(input);
+	
+	//LEO LA RESPUESTA DEL SERVIDOR
+	if(read(sd,buf,sizeof(buf)) == -1){
+                printf("Error: no se pudo leer el mensaje del servidor.\n");
+                exit(-1);
+        }
+
+        printf("Mensaje del servidor: %s\n",buf);
+	
+	memset(buf,0,sizeof(buf));
+
+	//ENVIO LA CONTRASEÑA AL SERVIDOR
+	printf("Contraseña: ");
+	input = read_input();
+
+	send_msg(sd,"PASS",input);
+
+	free(input);
+
+	//LEEMOS LA RESPUESTA DEL SERVIDOR TRAS ANALIZAR NUESTRO USUARIO Y CONTRASEÑA
+	if(read(sd,buf,sizeof(buf)) == -1){
+                printf("Error: no se pudo leer el mensaje del servidor.\n");
+                exit(-1);
+        }
+
+        printf("Mensaje del servidor: %s\n",buf);
+
+	memset(buf,0,sizeof(buf));
+}
 
 int main(int argc, char *argv[]){
 
 	int sd;
 	int puerto;
-	char buf[50];
+	char buf[BUFF_SIZE];
 	struct sockaddr_in servidor;
 
 	//VERIFICAMOS QUE SE HAYAN AGREGADO DOS ARGUMENTOS
@@ -98,9 +173,12 @@ int main(int argc, char *argv[]){
    	}
 
     	printf("Mensaje del servidor: %s\n",buf);
+	
+	//EL USUARIO DEBE LOGUEARSE
+	authenticate(sd);
 
 	//SE CIERRA EL FICHERO DEL LADO DEL CLIENTE
-	close(sd);
+	//close(sd);
 
 	return 0;
 
