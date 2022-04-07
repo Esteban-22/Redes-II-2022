@@ -146,8 +146,9 @@ void authenticate(int sd){
 void get(int sd, char *file_name){
 
 	FILE *file;
-	char desc[BYTES], buf[BYTES];
-	int f_size, recv_s, r_size = BYTES;
+	char buf[BYTES];
+	char *temp = NULL;
+	int r;
 
 	//ENVIAMOS EL COMANDO 'RETR' AL SERVIDOR
 	send_msg(sd,"RETR",file_name);		//file_name es el parametro (el nombre del archivo)
@@ -160,24 +161,35 @@ void get(int sd, char *file_name){
 
         printf("Mensaje del servidor: %s\n",buf);
 	
-	sscanf(buf, "File %*s size %d bytes", &f_size);
         memset(buf,0,sizeof(buf));
 	
 	//RECIBIMOS EL ARCHIVO
 	file = fopen(file_name, "w");
+
+	//VOLCAMOS EL CONTENIDO EN EL ARCHIVO ABIERTO QUE SE ENCUENTRA EN EL DIRECTORIO DEL CLIENTE
+	if(read(sd,buf,sizeof(buf)) == -1){
+                printf("Error: no se pudo leer el mensaje del servidor.\n");
+                exit(-1);
+        }
 	
+	//para evitar que llene el archivo de 512 bytes en cada pasada (aun si no llega a esa cantidad) usamos un puntero temporal, donde copiamos en él el contenido del buffer hasta que no encuentra nada mas, y luego escribimos en el archivo
+	temp = strtok(buf," ");
+	fwrite(temp,1,strlen(temp),file);
+	
+	memset(buf,0,sizeof(buf));
+	temp = NULL;
+
 	//IMPRIMIMOS LA CONFIRMACION DE TRANSFERENCIA COMPLETA
 	if(read(sd,buf,sizeof(buf)) == -1){
                 printf("Error: no se pudo leer el mensaje del servidor.\n");
                 exit(-1);
         }
 
-        printf("Mensaje del servidor: %s\n",buf);
-
+	printf("\nMensaje del servidor: %s\n\n",buf);
 	memset(buf,0,sizeof(buf));
 
 	fclose(file);
-
+	
 }
 
 
@@ -204,7 +216,7 @@ void operate(int sd){
 
 	while(true){
 
-		printf("Ingrese una operacion ('get' | 'quit'): ");
+		printf("Ingrese una operacion ('get file_name.txt' | 'quit'): ");
 
 		input = read_input();
 

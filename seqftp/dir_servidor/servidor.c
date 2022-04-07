@@ -216,7 +216,7 @@ void retr(int sd2, char *file_path){
 
 		//DELAY PARA EVITAR PROBLEMAS CON EL BUFFER
 		sleep(1);
-
+		
 		//ENVIAMOS EL ARCHIVO
 		
 		while(!feof(file)){
@@ -228,8 +228,12 @@ void retr(int sd2, char *file_path){
 		}
 
 		memset(buf,0,sizeof(buf));
+		
+		sleep(1);
 
 		//ENVIAMOS UN MENSAJE DE QUE SE COMPLETO LA TRANSFERENCIA
+		
+		strcpy(buf,MSG_226);
 
 		if(write(sd2,buf,sizeof(buf)) == -1){
                		printf("Error: no se pudo enviar la confirmacion.\n");
@@ -238,6 +242,7 @@ void retr(int sd2, char *file_path){
 		
 		memset(buf,0,sizeof(buf));
 		fclose(file);
+		
 	}
 }
 
@@ -250,8 +255,6 @@ void operate(int sd2){
 
 	while(true){
 
-		//oper[0] = param[0] = '\0';
-		
 		//CHEQUEAMOS LOS COMANDOS ENVIADOS POR EL CLIENTE
 		if(read(sd2,buf,sizeof(buf)) == -1){
                 	printf("Error: no se pudo leer el mensaje del cliente.\n");
