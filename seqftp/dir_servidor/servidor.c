@@ -9,6 +9,7 @@
 #include <errno.h>
 
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 
@@ -21,7 +22,9 @@
 #define MSG_299 "229 File %s size %ld bytes\r\n"
 #define MSG_226 "226 Transfer complete\r\n"
 
+#define BYTES 512
 #define SIZE 100
+#define CMD_SIZE 4 	//tamaño de los comandos para las operaciones
 
 bool check_credentials(char *user, char *pass){
 
@@ -79,8 +82,10 @@ bool authenticate(int sd2){
 	char user[SIZE], pass[SIZE];
         char pass_req[SIZE];    //MSG_331
         char *token = NULL;
-        char delimitador[] = "\r\n";
+        char delimitador[] = "\r\n";	//no me hace falta
 	
+	while(true){
+
 	//CAPTURAMOS EL NOMBRE DE USUARIO DEL CLIENTE
         if(read(sd2,buf,sizeof(buf)) == -1){
                 printf("Error: no se pudo leer el mensaje del cliente.\n");
@@ -160,18 +165,145 @@ bool authenticate(int sd2){
                 }
 		
 		memset(buf,0,sizeof(buf));
-
-		return false;
+		
+		//return false;
 	}
 
+	}
+	return false;
+}
+
+
+void retr(int sd2, char *file_path){
+
+	FILE *file;
+	int bread;
+	long size;
+	char buf[SIZE];
+	struct stat sb;
+
+	//CHEQUEAR QUE EL ARCHIVO EXISTA, SINO INFORMAR DEL ERROR AL CLIENTE
+	file = fopen(file_path,"r");
+	
+	if(file == NULL){
+        	strcpy(buf,MSG_550);
+
+                if(write(sd2,buf,sizeof(buf)) == -1){
+                        printf("Error: no se pudo enviar el mensaje.\n");
+                        exit(-1);
+                }
+		memset(buf,0,sizeof(buf));
+		exit(-1);
+	}
+	else{
+		//SI PUDIMOS ABRIR EL FICHERO, LE ENVIAMOS AL CLIENTE EL TAMAÑO DEL ARCHIVO
+	
+		if(stat(file_path, &sb) == -1){
+			perror("stat");
+			exit(-1);
+		}
+		
+		size = sb.st_size;
+
+		sprintf(buf,MSG_299,file_path,size);
+
+		if(write(sd2,buf,sizeof(buf)) == -1){
+                        printf("Error: no se pudo enviar el mensaje.\n");
+                        exit(-1);
+                }
+
+                memset(buf,0,sizeof(buf));
+
+		//DELAY PARA EVITAR PROBLEMAS CON EL BUFFER
+		sleep(1);
+
+		//ENVIAMOS EL ARCHIVO
+		
+		while(!feof(file)){
+			fread(buf,sizeof(char),BYTES,file);
+			if(write(sd2,buf,sizeof(buf)) == -1){
+	                        printf("Error: no se pudo transferir el archivo.\n");
+                        	exit(-1);
+                	}
+		}
+
+		memset(buf,0,sizeof(buf));
+
+		//ENVIAMOS UN MENSAJE DE QUE SE COMPLETO LA TRANSFERENCIA
+
+		if(write(sd2,buf,sizeof(buf)) == -1){
+               		printf("Error: no se pudo enviar la confirmacion.\n");
+                        exit(-1);
+                }
+		
+		memset(buf,0,sizeof(buf));
+		fclose(file);
+	}
+}
+
+
+void operate(int sd2){
+
+	char oper[CMD_SIZE], param[SIZE];
+	char buf[SIZE];
+	char *token = NULL;
+
+	while(true){
+
+		//oper[0] = param[0] = '\0';
+		
+		//CHEQUEAMOS LOS COMANDOS ENVIADOS POR EL CLIENTE
+		if(read(sd2,buf,sizeof(buf)) == -1){
+                	printf("Error: no se pudo leer el mensaje del cliente.\n");
+                	exit(-1);
+        	}
+
+		buf[strcspn(buf, "\r\n")] = 0;
+		token = strtok(buf, " ");
+		strcpy(oper,token);
+
+		//ELEGIMOS LA BIFURCACION EN BASE AL COMANDO RECIBIDO
+		if(strcmp(oper, "RETR") == 0){
+			
+			token = strtok(NULL," ");
+        		strcpy(param,token);
+			token = NULL;
+			retr(sd2,param);
+
+		}
+		else if(strcmp(oper, "QUIT") == 0){
+			
+			//ENVIO AL CLIENTE EL MSG GOODBYE Y CIERRO LA CONEXION
+			
+			memset(buf,0,sizeof(buf));
+
+			strcpy(buf,MSG_221);
+
+			if(write(sd2,buf,sizeof(buf)) == -1){
+                        	printf("Error: no se pudo enviar la confirmacion.\n");
+                        	exit(-1);
+                	}
+
+			break;
+
+		}
+		else{
+			printf("TODO: invalid command.\n");
+		}
+
+		memset(buf,0,sizeof(buf));
+
+	}
+	memset(buf,0,sizeof(buf));
 
 }
+
 
 int main(int argc, char *argv[]){
 
 	int sd;	 // descriptor del socket
 	int sd2; // descriptor para hablar con el cliente
-	int puerto;
+	int port;
 	unsigned int length;
     	char buf[SIZE];
 
@@ -183,11 +315,11 @@ int main(int argc, char *argv[]){
 		exit(-1);
 	}
 
-	puerto = atoi(argv[1]);
+	port = atoi(argv[1]);
 
 	//ASIGNAMOS PUERTO E IP AL SOCKET
 	addr.sin_family = AF_INET;
-	addr.sin_port = htons(puerto);
+	addr.sin_port = htons(port);
 	addr.sin_addr.s_addr = INADDR_ANY;
 
 	//SE ABRE EL SOCKET
@@ -210,36 +342,35 @@ int main(int argc, char *argv[]){
 		exit(-1);
 	}
 
-	//RECIBIMOS A LOS CLIENTES QUE ENTREN EN LA LLAMADA
-
-	length = sizeof(addr);
-	sd2 = accept(sd,(struct sockaddr*)&addr,(socklen_t*)&length);
-	if(sd2 == -1){
-		printf("Error de conexion.\n");
-		exit(-1);
-	}
-
-	//ENVIAMOS UN MENSAJE DE SALUDO AL CLIENTE
-    	
-	strcpy(buf,MSG_220);
-
-	//escribimos un mensaje en el fichero del cliente
-    	if(write(sd2,buf,sizeof(buf)) == -1){
-        	printf("Error: no se pudo enviar el mensaje.\n");
-	        exit(-1);
-    	}
-	
-	memset(buf,0,sizeof(buf));
-
-	//CORROBORAMOS QUE EL USUARIO SE LOGUEO CORRECTAMENTE
-	if(authenticate(sd2)==true){
+	while(true){
 		
+		//RECIBIMOS A LOS CLIENTES QUE ENTREN EN LA LLAMADA
+		length = sizeof(addr);
+		sd2 = accept(sd,(struct sockaddr*)&addr,(socklen_t*)&length);
+		if(sd2 == -1){
+			printf("Error de conexion.\n");
+			exit(-1);
+		}
 
+		//ENVIAMOS UN MENSAJE DE SALUDO AL CLIENTE
+		strcpy(buf,MSG_220);
+
+	    	if(write(sd2,buf,sizeof(buf)) == -1){
+        		printf("Error: no se pudo enviar el mensaje.\n");
+	        	exit(-1);
+	    	}
+	
+		memset(buf,0,sizeof(buf));
+
+		//CORROBORAMOS QUE EL USUARIO SE LOGUEO CORRECTAMENTE
+		if(authenticate(sd2)==true){
+		
+			//RECIBIMOS LOS COMANDOS DEL CLIENTE
+			operate(sd2);	
+			
+		}
 	}
-	else{
-
-
-	}
+	
 	
 	//SE CIERRA EL FICHERO DEL LADO DEL CLIENTE Y LUEGO DEL SERVIDOR
     	//close(sd2);

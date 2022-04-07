@@ -3,12 +3,14 @@
 #include <unistd.h>
 #include <string.h>
 #include <ctype.h>
+#include <stdbool.h>
 
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
 
 #define BUFF_SIZE 100
+#define BYTES 512
 
 //Funcion que se llama en validar_ip()
 int validar_nro(char *str){
@@ -23,7 +25,7 @@ int validar_nro(char *str){
 
 //Funcion que chequea si la IP tiene un formato valido
 int validar_ip(char *ip){
-	int num, punto = 0;
+	int num, dot = 0;
 	char *ptr;
 	if(ip == NULL){
 		return 0;
@@ -40,13 +42,13 @@ int validar_ip(char *ip){
 		if(num >= 0 && num <= 255){
 			ptr = strtok(NULL,"."); //
 			if(ptr != NULL){
-				punto++;	// incrementa el contador de puntos
+				dot++;	// incrementa el contador de puntos
 			}
 		} else {
 			return 0;
 		}
 	}
-	if(punto != 3){
+	if(dot != 3){
 		return 0;	//
 	}
 	return 1;
@@ -88,8 +90,13 @@ void authenticate(int sd){
 	
 	char *input;
 	char buf[BUFF_SIZE];
+	char *token = NULL;
 
-	//ENVIO EL NOMBRE DEL USUARIO AL SERVIDOR
+	bool confirm_log = false;
+
+	while(confirm_log == false){
+	
+		//ENVIO EL NOMBRE DEL USUARIO AL SERVIDOR
 	printf("Nombre de usuario: ");
 	input = read_input();
 	
@@ -122,16 +129,118 @@ void authenticate(int sd){
         }
 
         printf("Mensaje del servidor: %s\n",buf);
+		
+		token = strtok(buf, " ");
+
+		if(strcmp(token,"530") != 0){
+			confirm_log = true;
+		}
+
+		memset(buf,0,sizeof(buf));
+
+	}
+
+}
+
+
+void get(int sd, char *file_name){
+
+	FILE *file;
+	char desc[BYTES], buf[BYTES];
+	int f_size, recv_s, r_size = BYTES;
+
+	//ENVIAMOS EL COMANDO 'RETR' AL SERVIDOR
+	send_msg(sd,"RETR",file_name);		//file_name es el parametro (el nombre del archivo)
+
+	//RECIBIMOS LA RESPUESTA DEL SERVIDOR QUE CONTIENE EL TAMAÑO DEL ARCHIVO
+	if(read(sd,buf,sizeof(buf)) == -1){
+                printf("Error: no se pudo leer el mensaje del servidor.\n");
+                exit(-1);
+        }
+
+        printf("Mensaje del servidor: %s\n",buf);
+	
+	sscanf(buf, "File %*s size %d bytes", &f_size);
+        memset(buf,0,sizeof(buf));
+	
+	//RECIBIMOS EL ARCHIVO
+	file = fopen(file_name, "w");
+	
+	//IMPRIMIMOS LA CONFIRMACION DE TRANSFERENCIA COMPLETA
+	if(read(sd,buf,sizeof(buf)) == -1){
+                printf("Error: no se pudo leer el mensaje del servidor.\n");
+                exit(-1);
+        }
+
+        printf("Mensaje del servidor: %s\n",buf);
 
 	memset(buf,0,sizeof(buf));
+
+	fclose(file);
+
+}
+
+
+void quit(int sd){
+	
+	char buf[BUFF_SIZE];
+
+	send_msg(sd,"QUIT",NULL);
+
+	if(read(sd,buf,sizeof(buf)) == -1){
+                printf("Error: no se pudo leer el mensaje del servidor.\n");
+                exit(-1);
+        }
+	
+	printf("Mensaje del servidor: %s\n",buf);
+
+	memset(buf,0,sizeof(buf));
+}
+
+
+void operate(int sd){
+
+	char *input, *oper, *param;
+
+	while(true){
+
+		printf("Ingrese una operacion ('get' | 'quit'): ");
+
+		input = read_input();
+
+		if(input == NULL){
+			continue;
+		}
+
+		oper = strtok(input, " ");
+
+		if(strcmp(oper,"get") == 0){
+			param = strtok(NULL, " ");
+			
+			get(sd,param);
+		
+		}
+		else if(strcmp(oper,"quit") == 0){
+			
+			quit(sd);
+			
+			break;
+		}
+		else{
+			printf("Unexpected command.\n\n");
+		}
+		free(input);
+	}
+	free(input);
+
 }
 
 int main(int argc, char *argv[]){
 
 	int sd;
-	int puerto;
+	int port;
 	char buf[BUFF_SIZE];
-	struct sockaddr_in servidor;
+	struct sockaddr_in server;
 
 	//VERIFICAMOS QUE SE HAYAN AGREGADO DOS ARGUMENTOS
 	if(argc != 3){
@@ -147,12 +256,12 @@ int main(int argc, char *argv[]){
     	validar_ip(ip);
 
 	//Guardamos el puerto en una variable
-	puerto = atoi(argv[2]);
+	port = atoi(argv[2]);
 
 	//OBTENEMOS LOS DATOS DEL SERVIDOR
- 	servidor.sin_family = AF_INET;
-   	servidor.sin_port = htons(puerto);
-    	servidor.sin_addr.s_addr = inet_addr(argv[1]);
+ 	server.sin_family = AF_INET;
+   	server.sin_port = htons(port);
+    	server.sin_addr.s_addr = inet_addr(argv[1]);
 
 	//ABRO DEL SOCKET
 	if((sd = socket(AF_INET,SOCK_STREAM,0)) == -1){
@@ -161,7 +270,7 @@ int main(int argc, char *argv[]){
 	}
 
 	//NOS CONECTAMOS AL SERVIDOR
-	if(connect(sd,(struct sockaddr*)&servidor,sizeof(servidor)) == -1){
+	if(connect(sd,(struct sockaddr*)&server,sizeof(server)) == -1){
 		printf("Error: no se pudo conectar con el servidor.\n");
 		exit(-1);
 	}
@@ -176,9 +285,12 @@ int main(int argc, char *argv[]){
 	
 	//EL USUARIO DEBE LOGUEARSE
 	authenticate(sd);
+	
+	//EL USUARIO PUEDE REALIZAR OPERACIONES
+	operate(sd);
 
 	//SE CIERRA EL FICHERO DEL LADO DEL CLIENTE
-	//close(sd);
+	close(sd);
 
 	return 0;
 
