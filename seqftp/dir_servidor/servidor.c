@@ -177,9 +177,8 @@ bool authenticate(int sd2){
 void retr(int sd2, char *file_path){
 
 	FILE *file;
-	int bread;
 	long size;
-	char buf[SIZE];
+	char buf[BYTES];
 	struct stat sb;
 
 	//CHEQUEAR QUE EL ARCHIVO EXISTA, SINO INFORMAR DEL ERROR AL CLIENTE
@@ -225,6 +224,7 @@ void retr(int sd2, char *file_path){
 	                        printf("Error: no se pudo transferir el archivo.\n");
                         	exit(-1);
                 	}
+			memset(buf,0,sizeof(buf));
 		}
 
 		memset(buf,0,sizeof(buf));
@@ -354,6 +354,10 @@ int main(int argc, char *argv[]){
 			printf("Error de conexion.\n");
 			exit(-1);
 		}
+		
+		char ip[INET_ADDRSTRLEN];
+		inet_ntop(AF_INET,&(addr.sin_addr),ip,INET_ADDRSTRLEN);
+		printf("Conexion establecida con IP: %s y PORT: %d\n",ip,ntohs(addr.sin_port));
 
 		//ENVIAMOS UN MENSAJE DE SALUDO AL CLIENTE
 		strcpy(buf,MSG_220);

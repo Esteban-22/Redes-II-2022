@@ -146,7 +146,7 @@ void authenticate(int sd){
 void get(int sd, char *file_name){
 
 	FILE *file;
-	char buf[BYTES];
+	char buf[1024];
 	char *temp = NULL;
 	int r;
 
@@ -168,11 +168,12 @@ void get(int sd, char *file_name){
 
 	//VOLCAMOS EL CONTENIDO EN EL ARCHIVO ABIERTO QUE SE ENCUENTRA EN EL DIRECTORIO DEL CLIENTE
 	if(read(sd,buf,sizeof(buf)) == -1){
-                printf("Error: no se pudo leer el mensaje del servidor.\n");
-                exit(-1);
+               	printf("Error: no se pudo leer el mensaje del servidor.\n");
+               	exit(-1);
         }
 	
 	//para evitar que llene el archivo de 512 bytes en cada pasada (aun si no llega a esa cantidad) usamos un puntero temporal, donde copiamos en él el contenido del buffer hasta que no encuentra nada mas, y luego escribimos en el archivo
+	
 	temp = strtok(buf," ");
 	fwrite(temp,1,strlen(temp),file);
 	
@@ -253,6 +254,7 @@ int main(int argc, char *argv[]){
 	int port;
 	char buf[BUFF_SIZE];
 	struct sockaddr_in server;
+	struct sockaddr_in client;
 
 	//VERIFICAMOS QUE SE HAYAN AGREGADO DOS ARGUMENTOS
 	if(argc != 3){
@@ -275,6 +277,11 @@ int main(int argc, char *argv[]){
    	server.sin_port = htons(port);
     	server.sin_addr.s_addr = inet_addr(argv[1]);
 
+	//datos del cliente
+	client.sin_family = AF_INET;
+	client.sin_port = htons(0);
+	client.sin_addr.s_addr = INADDR_ANY;
+
 	//ABRO DEL SOCKET
 	if((sd = socket(AF_INET,SOCK_STREAM,0)) == -1){
 		printf("Error de apertura del socket.\n");
@@ -286,7 +293,13 @@ int main(int argc, char *argv[]){
 		printf("Error: no se pudo conectar con el servidor.\n");
 		exit(-1);
 	}
-
+	
+	//luego de conectarnos queremos saber nuestro propio puerto
+	//para eso necesitamos un socket para el cliente (previamente definido)
+	int cl_sz = sizeof(client);
+	getsockname(sd,(struct sockaddr*)&client,&cl_sz);
+	printf("My port is %d.\n",ntohs(client.sin_port));
+	
     	//LEEMOS EL MENSAJE EN EL FICHERO Y LO COPIAMOS EN EL BUFFER
     	if(read(sd,buf,sizeof(buf)) == -1){
         	printf("Error: no se pudo leer el mensaje del servidor.\n");
