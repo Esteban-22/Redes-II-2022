@@ -9,8 +9,12 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 
+#include <fcntl.h>
+
 #define BUFF_SIZE 100
 #define BYTES 512
+
+#define PORT "PORT %d,%d,%d,%d,%d,%d\r\n"
 
 //Funcion que se llama en validar_ip()
 int validar_nro(char *str){
@@ -96,7 +100,7 @@ void authenticate(int sd){
 
 	while(confirm_log == false){
 	
-		//ENVIO EL NOMBRE DEL USUARIO AL SERVIDOR
+	//ENVIO EL NOMBRE DEL USUARIO AL SERVIDOR
 	printf("Nombre de usuario: ");
 	input = read_input();
 	
@@ -143,12 +147,72 @@ void authenticate(int sd){
 }
 
 
-void get(int sd, char *file_name){
+void get(int sd, char *file_name, int c_port){
 
 	FILE *file;
-	char buf[1024];
+	char buf[BYTES];
 	char *temp = NULL;
-	int r;
+	bool act_mode = false;
+
+	//para crear el canal de datos el cliente toma el rol del servidor
+	
+	int fh_c, fh_s;			//file handler del cliente y servidor
+	struct sockaddr_in client;
+	int p1, p2;			//para los args del PORT
+
+	//asignamos puerto e ip al socket
+	c_port+=1;
+	client.sin_family = AF_INET;
+	client.sin_port = htons(c_port);
+	client.sin_addr.s_addr = inet_addr("127.0.0.1");
+	
+	//abro el socket
+	if((fh_c = socket(AF_INET,SOCK_STREAM,0)) < 0){
+		printf("Error de apertura del socket.\n");
+		exit(-1);
+	}
+	
+	//asociamos un puerto e ip al socket
+	if(bind(fh_c,(struct sockaddr*)&client,sizeof(client)) < 0){
+		printf("Error de asociacion de socket (error en bind()).\n");
+		
+		//asigno un nuevo puerto con PORT
+		client.sin_port = htons(0);
+		if(bind(fh_c, (struct sockaddr*)&client,sizeof(client)) <0){
+			printf("Error al asignar un puerto al socket.\n");
+			exit(-1);
+		}
+		
+		int cl_sz = sizeof(client);
+        	getsockname(fh_c,(struct sockaddr*)&client,(socklen_t*)&cl_sz);
+	        c_port = ntohs(client.sin_port);
+		printf("My port is %d.\n",c_port);
+		
+		//obtenemos los puertos para los argumentos del PORT
+		p1 = c_port % 256;
+		p2 = c_port - (p1*256);
+
+		//enviamos el nuevo puerto al servidor
+		
+		sprintf(buf,PORT,127,0,0,1,p1,p2);
+		
+		if(write(sd,buf,sizeof(buf)) == -1){	//sd, porque le envio un comando
+                        printf("Error: no se pudo enviar el mensaje.\n");
+                        exit(-1);
+                }
+
+                memset(buf,0,sizeof(buf));
+		
+		act_mode = true;
+
+	}
+
+	//escuchamos
+	//al no ser bloqueante, puedo implementarla antes del RETR
+	if(listen(fh_c,1) < 0){
+		printf("No se ha podido levantar la atencion.\n");
+		exit(-1);
+	}
 
 	//ENVIAMOS EL COMANDO 'RETR' AL SERVIDOR
 	send_msg(sd,"RETR",file_name);		//file_name es el parametro (el nombre del archivo)
@@ -162,33 +226,62 @@ void get(int sd, char *file_name){
         printf("Mensaje del servidor: %s\n",buf);
 	
         memset(buf,0,sizeof(buf));
+
+	//aceptamos la peticion de conexion del servidor, una vez comencemos la transferencia del archivo
+	unsigned int len = sizeof(client);
+	if((fh_s = accept(fh_c,(struct sockaddr*)&client,(socklen_t*)&len)) < 0){
+		printf("Error: no se pudo recibir al servidor.\n");
+		exit(-1);
+	}
+	
+	if(act_mode == true){
+		
+		if(read(sd,buf,sizeof(buf)) < 0){
+	                printf("Error: no se pudo leer el mensaje del servidor.\n");
+                	exit(-1);
+        	}
+		printf("Mensaje del servidor: %s",buf);
+		memset(buf,0,sizeof(buf));
+
+	}
+
+	//cambiamos el file handler original por fh_s
 	
 	//RECIBIMOS EL ARCHIVO
 	file = fopen(file_name, "w");
+	
+	if(file == NULL){
+		printf("Error: no se pudo abrir el archivo en modo escritura.\n");
+		exit(-1);
+	}
 
 	//VOLCAMOS EL CONTENIDO EN EL ARCHIVO ABIERTO QUE SE ENCUENTRA EN EL DIRECTORIO DEL CLIENTE
-	if(read(sd,buf,sizeof(buf)) == -1){
-               	printf("Error: no se pudo leer el mensaje del servidor.\n");
-               	exit(-1);
+	
+	if(read(fh_s,buf,sizeof(buf)) < 0){
+         	printf("Error: no se pudo leer el mensaje del servidor.\n");
+        	exit(-1);
         }
-	
-	//para evitar que llene el archivo de 512 bytes en cada pasada (aun si no llega a esa cantidad) usamos un puntero temporal, donde copiamos en él el contenido del buffer hasta que no encuentra nada mas, y luego escribimos en el archivo
-	
-	temp = strtok(buf," ");
-	fwrite(temp,1,strlen(temp),file);
-	
-	memset(buf,0,sizeof(buf));
-	temp = NULL;
 
-	//IMPRIMIMOS LA CONFIRMACION DE TRANSFERENCIA COMPLETA
-	if(read(sd,buf,sizeof(buf)) == -1){
+
+	//para evitar que llene el archivo de 512 bytes (aun si no llega a esa cantidad) usamos un puntero temporal, donde copiamos el contenido del buffer
+		
+	temp = strtok(buf," ");
+        fwrite(temp,1,strlen(temp),file);
+		
+	memset(buf,0,sizeof(buf));
+        temp = NULL;
+
+	//RECIBIMOS EL MENSAJE DE TRANSFERENCIA COMPLETA POR PARTE DEL SERVIDOR
+	if(read(fh_s,buf,sizeof(buf)) < 0){
                 printf("Error: no se pudo leer el mensaje del servidor.\n");
                 exit(-1);
         }
 
 	printf("\nMensaje del servidor: %s\n\n",buf);
-	memset(buf,0,sizeof(buf));
 
+	memset(buf,0,sizeof(buf));
+	
+	close(fh_c); close(fh_s);	//cerramos los file handler usados
 	fclose(file);
 	
 }
@@ -211,7 +304,7 @@ void quit(int sd){
 }
 
 
-void operate(int sd){
+void operate(int sd, int c_port){
 
 	char *input, *oper, *param;
 
@@ -230,7 +323,7 @@ void operate(int sd){
 		if(strcmp(oper,"get") == 0){
 			param = strtok(NULL, " ");
 			
-			get(sd,param);
+			get(sd,param,c_port);
 		
 		}
 		else if(strcmp(oper,"quit") == 0){
@@ -277,7 +370,7 @@ int main(int argc, char *argv[]){
    	server.sin_port = htons(port);
     	server.sin_addr.s_addr = inet_addr(argv[1]);
 
-	//datos del cliente
+	//DATOS DEL CLIENTE
 	client.sin_family = AF_INET;
 	client.sin_port = htons(0);
 	client.sin_addr.s_addr = INADDR_ANY;
@@ -294,12 +387,14 @@ int main(int argc, char *argv[]){
 		exit(-1);
 	}
 	
-	//luego de conectarnos queremos saber nuestro propio puerto
-	//para eso necesitamos un socket para el cliente (previamente definido)
+	//QUEREMOS SABER NUESTRO PROPIO PUERTO
 	int cl_sz = sizeof(client);
-	getsockname(sd,(struct sockaddr*)&client,&cl_sz);
+	getsockname(sd,(struct sockaddr*)&client,(socklen_t*)&cl_sz);
 	printf("My port is %d.\n",ntohs(client.sin_port));
+	printf("My IP address is %s.\n",inet_ntoa(client.sin_addr));
 	
+	int c_port = ntohs(client.sin_port);
+
     	//LEEMOS EL MENSAJE EN EL FICHERO Y LO COPIAMOS EN EL BUFFER
     	if(read(sd,buf,sizeof(buf)) == -1){
         	printf("Error: no se pudo leer el mensaje del servidor.\n");
@@ -312,7 +407,7 @@ int main(int argc, char *argv[]){
 	authenticate(sd);
 	
 	//EL USUARIO PUEDE REALIZAR OPERACIONES
-	operate(sd);
+	operate(sd,c_port);
 
 	//SE CIERRA EL FICHERO DEL LADO DEL CLIENTE
 	close(sd);
