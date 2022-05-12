@@ -27,8 +27,104 @@
 #define SIZE 100
 #define CMD_SIZE 4 	//tamaño de los comandos para las operaciones
 
-bool port(char[],int,struct sockaddr_in);
+bool chech_credentials(char*,char*);
+bool authenticate(int);
+void retr(int,char*,int,bool,int,struct sockaddr_in);
+void operate(int,int);
+void send_file(int,struct sockaddr_in,int,FILE*,char*);
 
+int main(int argc, char *argv[]){
+
+	int sd;	 // descriptor del socket del lado del servidor
+	//int sd2; // descriptor para hablar con el cliente, canal de comandos
+	int port;
+	unsigned int length;
+    	char buf[SIZE]={'\0'};
+
+	struct sockaddr_in addr;
+
+	//VERIFICAMOS QUE SE HAYA AGREGADO UN SOLO ARGUMENTO
+	if(argc != 2){
+		printf("Cantidad de argumentos invalida.\n");
+		exit(-1);
+	}
+
+	port = atoi(argv[1]);
+
+	//ASIGNAMOS PUERTO E IP AL SOCKET
+	addr.sin_family = AF_INET;
+	addr.sin_port = htons(port);
+	addr.sin_addr.s_addr = INADDR_ANY;
+
+	//SE ABRE EL SOCKET
+	sd = socket(AF_INET,SOCK_STREAM,0);
+
+	if(sd < 0){
+		printf("Error de apertura del socket.\n");
+		exit(-1);
+	}
+	
+	//AVISAMOS AL S.O. QUE ABRIMOS UN SOCKET Y QUE DEBE ASOCIAR NUESTRO PROGRAMA A ESE SOCKET
+	if(bind(sd,(struct sockaddr*)&addr,sizeof(addr)) == -1){
+		printf("Error de asociacion de socket (error en bind()).\n");
+		exit(-1);
+	}
+
+	//ESCUCHAMOS LAS PETICIONES QUE LLEGUEN DEL LADO DEL CLIENTE
+	if(listen(sd,2) == -1){
+		printf("No se ha podido levantar la atencion.\n");
+		exit(-1);
+	}
+
+	while(true){
+		int sd2;
+		
+		//RECIBIMOS A LOS CLIENTES QUE ENTREN EN LA LLAMADA
+		length = sizeof(addr);
+		sd2 = accept(sd,(struct sockaddr*)&addr,(socklen_t*)&length);
+		
+		if(sd2 < 0){
+			printf("Error de conexion.\n");
+			exit(-1);
+		}
+		
+		//SE MUESTRAN LAS IP Y PUERTO DE AMBOS	
+		char ip[INET_ADDRSTRLEN];
+		char ip_client[INET_ADDRSTRLEN];
+		strcpy(ip_client, inet_ntoa(addr.sin_addr));
+		
+		inet_ntop(AF_INET,&(addr.sin_addr),ip,INET_ADDRSTRLEN);
+		printf("Conexion establecida con IP (servidor): %s / PORT (servidor): %d e IP (cliente): %s / PORT (cliente): %d\n",ip,port,ip_client,ntohs(addr.sin_port));
+		int c_port = ntohs(addr.sin_port);
+
+		//ENVIAMOS UN MENSAJE DE SALUDO AL CLIENTE
+		strcpy(buf,MSG_220);
+
+	    	if(write(sd2,buf,sizeof(buf)) == -1){
+        		printf("Error: no se pudo enviar el mensaje.\n");
+	        	exit(-1);
+	    	}
+		
+		memset(buf,0,sizeof(buf));
+
+		//CORROBORAMOS QUE EL USUARIO SE LOGUEO CORRECTAMENTE
+		if(authenticate(sd2)==true){
+		
+			//RECIBIMOS LOS COMANDOS DEL CLIENTE
+			operate(sd2, c_port);	
+			
+		}
+		close(sd2);
+	}
+	
+	
+	//SE CIERRA EL FICHERO DEL LADO DEL CLIENTE Y LUEGO DEL SERVIDOR
+    	//close(sd2);
+    	close(sd);
+
+	return 0;
+
+}
 
 bool check_credentials(char *user, char *pass){
 
@@ -174,16 +270,37 @@ bool authenticate(int sd2){
 	return false;
 }
 
+//conexion con el cliente y envio del archivo
+void send_file(int fh, struct sockaddr_in sock, int readed, FILE *file, char *buf){
+	
+	if(connect(fh,(struct sockaddr*)&sock,sizeof(sock)) < 0){
+        	printf("Error: no se pudo conectar con el cliente.\n");
+                exit(-1);
+        }
+
+        //ENVIAMOS EL ARCHIVO
+
+        while(!feof(file)){
+        	readed = fread(buf,sizeof(char),BYTES,file);
+                if(write(fh,buf,readed) == -1){
+                	printf("Error: no se pudo transferir el archivo.\n");
+                        exit(-1);
+                }
+		memset(&buf,0,sizeof(char));
+	}
+        memset(&buf,0,sizeof(char));
+}
 
 void retr(int sd2, char *file_path, int c_port, bool act_mode, int fh_port, struct sockaddr_in port_addr){
 
 	FILE *file;
 	long size;
-	char buf[BYTES];
+	char buf[BYTES]={'\0'};
 	struct stat sb;
 	
 	int fh; //se usa para la conexion con el cliente
 	struct sockaddr_in server;
+	int readed = 0;
 
 	if(act_mode == false){
 
@@ -227,7 +344,7 @@ void retr(int sd2, char *file_path, int c_port, bool act_mode, int fh_port, stru
 		sprintf(buf,MSG_299,file_path,size);
 
 		if(write(sd2,buf,sizeof(buf)) == -1){
-                        printf("Error: no se pudo enviar el mensaje.\n");
+                        printf("Error: no se pudo enviar el mensaje(1).\n");
                         exit(-1);
                 }
 
@@ -236,60 +353,14 @@ void retr(int sd2, char *file_path, int c_port, bool act_mode, int fh_port, stru
 		//DELAY PARA EVITAR PROBLEMAS CON EL BUFFER
 		sleep(1);
 		
-		//establecemos conexion con el cliente
+		//establecemos conexion con el cliente y enviamos el archivo
 		
-		//NOTA: hacer funcion para ambas ramas, ya que hacen lo mismo
 		if(act_mode == false){
-
-			if(connect(fh,(struct sockaddr*)&server,sizeof(server)) < 0){
-				printf("Error: no se pudo conectar con el cliente.\n");
-				exit(-1);
-			}
-
-		//cambiamos el file handler original por fh
-
-		//ENVIAMOS EL ARCHIVO
-		
-		while(!feof(file)){
-			fread(buf,sizeof(char),BYTES,file);
-			if(write(fh,buf,sizeof(buf)) == -1){
-	                        printf("Error: no se pudo transferir el archivo.\n");
-                        	exit(-1);
-                	}
-			memset(buf,0,sizeof(buf));
-		}
-
-		memset(buf,0,sizeof(buf));
+			send_file(fh,server,readed,file,buf);
 		}
 
 		else{
-		
-			if(connect(fh_port,(struct sockaddr*)&port_addr,sizeof(port_addr)) < 0){
-                                printf("Error: no se pudo conectar con el cliente.\n");
-                                exit(-1);
-                        }
-
-			//enviar mensaje de confirmacion (por canal de comandos)
-			//el cliente debe leer el mensaje para comprobarlo
-			
-			strcpy(buf,MSG_200);
-			if(write(sd2,buf,sizeof(buf)) == -1){
-                                printf("Error: no se pudo transferir el archivo.\n");
-                                exit(-1);
-                        }
-                        memset(buf,0,sizeof(buf));
-
-			//enviar el archivo
-			while(!feof(file)){
-                        	fread(buf,sizeof(char),BYTES,file);
-                        	if(write(fh_port,buf,sizeof(buf)) == -1){
-                                	printf("Error: no se pudo transferir el archivo.\n");
-                        	        exit(-1);
-                        	}
-                        	memset(buf,0,sizeof(buf));
-                	}
-
-                	memset(buf,0,sizeof(buf));
+			send_file(fh_port,port_addr,readed,file,buf);
 		}
 
 		sleep(1);
@@ -298,7 +369,7 @@ void retr(int sd2, char *file_path, int c_port, bool act_mode, int fh_port, stru
 		
 		strcpy(buf,MSG_226);
 
-		if(write(fh,buf,sizeof(buf)) == -1){
+		if(write(sd2,buf,sizeof(buf)) == -1){
                		printf("Error: no se pudo enviar la confirmacion.\n");
                         exit(-1);
                 }
@@ -310,43 +381,77 @@ void retr(int sd2, char *file_path, int c_port, bool act_mode, int fh_port, stru
 	}
 }
 
-
 void operate(int sd2, int c_port){
 
-	char oper[CMD_SIZE], param[SIZE];
-	char buf[SIZE];
+	char oper[CMD_SIZE]={'\0'}, param[SIZE]={'\0'};
+	char buf[SIZE]={'\0'};
 	char *token = NULL;
 	
 	//para el comando PORT
 	struct sockaddr_in port_addr;
-        int fh = 0;
+        int fh;
 	bool act_mode = false;
+	char buf_temp[SIZE]={'\0'};
 
 	while(true){
-
+		
 		//CHEQUEAMOS LOS COMANDOS ENVIADOS POR EL CLIENTE
-		if(read(sd2,buf,sizeof(buf)) == -1){
+		if(read(sd2,buf,sizeof(buf)) < 0){
                 	printf("Error: no se pudo leer el mensaje del cliente.\n");
-                	exit(-1);
+                	perror("Error: ");
+			exit(-1);
         	}
-
+		
+		strcpy(buf_temp,buf);
 		buf[strcspn(buf, "\r\n")] = 0;
 		token = strtok(buf, " ");
 		strcpy(oper,token);
 
 		//ELEGIMOS LA BIFURCACION EN BASE AL COMANDO RECIBIDO
 		
-			//agregamos el comando port
 		if(strncmp(oper, "PORT",4) == 0){
-			act_mode = port(buf,fh,port_addr);
+
+
+			//variables usadas para obtener los datos del PORT
+        		int port[2];
+			int port_dec;
+		
+			//variables para asociar el socket
+		        int ip[4];
+		        char ip_decimal[40];
+			
+			act_mode = true;
+
+			fh = socket(AF_INET, SOCK_STREAM, 0);
+			printf("buffer: %s\n",buf_temp);
+			sscanf(buf_temp,"PORT %d,%d,%d,%d,%d,%d\r\n",&ip[0],&ip[1],&ip[2],&ip[3],&port[0],&port[1]);
+		        port_addr.sin_family=AF_INET;
+		        sprintf(ip_decimal, "%d.%d.%d.%d", ip[0], ip[1], ip[2],ip[3]);
+		        printf("IP is %s\n",ip_decimal);
+		        port_addr.sin_addr.s_addr = inet_addr(ip_decimal);
+      		  	port_dec = port[0]*256+port[1];
+       			printf("Port is %d\n",port_dec);
+			port_addr.sin_port = htons(port_dec);	
+	
+			//enviar mensaje de confirmacion (por canal de comandos)
+			//el cliente debe leer el mensaje para comprobarlo
+			memset(buf_temp,0,sizeof(buf_temp));	
+
+			strcpy(buf_temp,MSG_200);
+			if(write(sd2,buf_temp,sizeof(buf_temp)) == -1){
+        			printf("Error: no se pudo enviar la confirmacion de PORT.\n");
+        		        exit(-1);
+        		}
+	
+			memset(buf_temp,0,sizeof(buf_temp));
+
 		}
 		else if(strcmp(oper, "RETR") == 0){
-			
 			token = strtok(NULL," ");
         		strcpy(param,token);
 			token = NULL;
 			retr(sd2,param,c_port,act_mode,fh,port_addr);
-
+			act_mode = false;
 		}
 		else if(strcmp(oper, "QUIT") == 0){
 			
@@ -364,134 +469,10 @@ void operate(int sd2, int c_port){
 			break;
 
 		}
-		else{
-			printf("TODO: invalid command.\n");
-		}
 
 		memset(buf,0,sizeof(buf));
-
 	}
 	memset(buf,0,sizeof(buf));
 
 }
 
-
-int main(int argc, char *argv[]){
-
-	int sd;	 // descriptor del socket del lado del servidor
-	int sd2; // descriptor para hablar con el cliente, canal de comandos
-	int port;
-	unsigned int length;
-    	char buf[SIZE];
-
-	struct sockaddr_in addr;
-
-	//VERIFICAMOS QUE SE HAYA AGREGADO UN SOLO ARGUMENTO
-	if(argc != 2){
-		printf("Cantidad de argumentos invalida.\n");
-		exit(-1);
-	}
-
-	port = atoi(argv[1]);
-
-	//ASIGNAMOS PUERTO E IP AL SOCKET
-	addr.sin_family = AF_INET;
-	addr.sin_port = htons(port);
-	addr.sin_addr.s_addr = INADDR_ANY;
-
-	//SE ABRE EL SOCKET
-	sd = socket(AF_INET,SOCK_STREAM,0);
-
-	if(sd < 0){
-		printf("Error de apertura del socket.\n");
-		exit(-1);
-	}
-	
-	//AVISAMOS AL S.O. QUE ABRIMOS UN SOCKET Y QUE DEBE ASOCIAR NUESTRO PROGRAMA A ESE SOCKET
-	if(bind(sd,(struct sockaddr*)&addr,sizeof(addr)) == -1){
-		printf("Error de asociacion de socket (error en bind()).\n");
-		exit(-1);
-	}
-
-	//ESCUCHAMOS LAS PETICIONES QUE LLEGUEN DEL LADO DEL CLIENTE
-	if(listen(sd,2) == -1){
-		printf("No se ha podido levantar la atencion.\n");
-		exit(-1);
-	}
-
-	while(true){
-		
-		//RECIBIMOS A LOS CLIENTES QUE ENTREN EN LA LLAMADA
-		length = sizeof(addr);
-		sd2 = accept(sd,(struct sockaddr*)&addr,(socklen_t*)&length);
-		if(sd2 == -1){
-			printf("Error de conexion.\n");
-			exit(-1);
-		}
-		
-		//SE MUESTRAN LAS IP Y PUERTO DE AMBOS	
-		char ip[INET_ADDRSTRLEN];
-		char ip_client[INET_ADDRSTRLEN];
-		strcpy(ip_client, inet_ntoa(addr.sin_addr));
-		
-		inet_ntop(AF_INET,&(addr.sin_addr),ip,INET_ADDRSTRLEN);
-		printf("Conexion establecida con IP (servidor): %s / PORT (servidor): %d e IP (cliente): %s / PORT (cliente): %d\n",ip,port,ip_client,ntohs(addr.sin_port));
-		int c_port = ntohs(addr.sin_port);
-
-		//ENVIAMOS UN MENSAJE DE SALUDO AL CLIENTE
-		strcpy(buf,MSG_220);
-
-	    	if(write(sd2,buf,sizeof(buf)) == -1){
-        		printf("Error: no se pudo enviar el mensaje.\n");
-	        	exit(-1);
-	    	}
-	
-		memset(buf,0,sizeof(buf));
-
-		//CORROBORAMOS QUE EL USUARIO SE LOGUEO CORRECTAMENTE
-		if(authenticate(sd2)==true){
-		
-			//RECIBIMOS LOS COMANDOS DEL CLIENTE
-			operate(sd2, c_port);	
-			
-		}
-		close(sd2);
-	}
-	
-	
-	//SE CIERRA EL FICHERO DEL LADO DEL CLIENTE Y LUEGO DEL SERVIDOR
-    	close(sd2);
-    	close(sd);
-
-	return 0;
-
-}
-
-
-bool port(char buf[],int fh, struct sockaddr_in port_addr){
-	
-	//variables usadas para obtener los datos del PORT
-        unsigned char port[2];
-	int port_dec;
-
-	//variables para asociar el socket
-        int ip[4];
-        char ip_decimal[40];
-        
-	//struct sockaddr_in port_addr;
-	//int fh;
-
-	fh = socket(AF_INET, SOCK_STREAM, 0);
-
-	sscanf(buf,"PORT %d,%d,%d,%d,%d,%d",&ip[0],&ip[1],&ip[2],&ip[3],(int*)&port[0],(int*)&port[1]);
-        port_addr.sin_family=AF_INET;
-        sprintf(ip_decimal, "%d.%d.%d.%d", ip[0], ip[1], ip[2],ip[3]);
-        printf("IP is %s\n",ip_decimal);
-        port_addr.sin_addr.s_addr = inet_addr(ip_decimal);
-        port_dec = port[0]*256+port[1];
-        printf("Port is %d\n",port_dec);
-	port_addr.sin_port = htons(port_dec);	
-
-	//luego vendria el connect, pero eso se hace antes de transferir
-	return true;
-}
