@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <dirent.h>
 
 #include <stdbool.h>
 #include <stdarg.h>
@@ -10,8 +11,10 @@
 
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+
 
 #define MSG_220 "220 srvftp version 1.0\r\n"
 #define MSG_331 "331 Password required for %s\r\n"
@@ -27,16 +30,22 @@
 #define SIZE 100
 #define CMD_SIZE 4 	//tamaño de los comandos para las operaciones
 
+#define PWD_CLIENTE "/home/styvien/Documentos/Redes-II-2022/seqftp/dir_cliente/"
+
 bool chech_credentials(char*,char*);
 bool authenticate(int);
 void retr(int,char*,int,bool,int,struct sockaddr_in);
+void cwd(int,char*);
+void nlist(int,char*);
+void addDir(int,char*);
+void delDir(int,char*);
 void operate(int,int);
-void send_file(int,struct sockaddr_in,int,FILE*,char*);
+void send_file(int,struct sockaddr_in,int,FILE*);
 
 int main(int argc, char *argv[]){
 
 	int sd;	 // descriptor del socket del lado del servidor
-	//int sd2; // descriptor para hablar con el cliente, canal de comandos
+	int sd2; // descriptor para hablar con el cliente, canal de comandos
 	int port;
 	unsigned int length;
     	char buf[SIZE]={'\0'};
@@ -71,32 +80,91 @@ int main(int argc, char *argv[]){
 	}
 
 	//ESCUCHAMOS LAS PETICIONES QUE LLEGUEN DEL LADO DEL CLIENTE
-	if(listen(sd,2) == -1){
+	if(listen(sd,5) == -1){
 		printf("No se ha podido levantar la atencion.\n");
 		exit(-1);
 	}
 
 	while(true){
-		int sd2;
 		
 		//RECIBIMOS A LOS CLIENTES QUE ENTREN EN LA LLAMADA
 		length = sizeof(addr);
-		sd2 = accept(sd,(struct sockaddr*)&addr,(socklen_t*)&length);
-		
-		if(sd2 < 0){
+		if((sd2 = accept(sd,(struct sockaddr*)&addr,(socklen_t*)&length)) < 0){
 			printf("Error de conexion.\n");
 			exit(-1);
 		}
 		
+		
 		//SE MUESTRAN LAS IP Y PUERTO DE AMBOS	
-		char ip[INET_ADDRSTRLEN];
-		char ip_client[INET_ADDRSTRLEN];
+		char ip[INET_ADDRSTRLEN] = {'\0'};
+		char ip_client[INET_ADDRSTRLEN] = {'\0'};
 		strcpy(ip_client, inet_ntoa(addr.sin_addr));
 		
 		inet_ntop(AF_INET,&(addr.sin_addr),ip,INET_ADDRSTRLEN);
-		printf("Conexion establecida con IP (servidor): %s / PORT (servidor): %d e IP (cliente): %s / PORT (cliente): %d\n",ip,port,ip_client,ntohs(addr.sin_port));
+		//printf("Conexion establecida con IP (servidor): %s / PORT (servidor): %d e IP (cliente): %s / PORT (cliente): %d\n",ip,port,ip_client,ntohs(addr.sin_port));
 		int c_port = ntohs(addr.sin_port);
+		
 
+		//INICIO DE LA CONCURRENCIA CON FORK()
+		//printf("** Proceso PID inicial: %d\n\n",getpid());
+
+		pid_t pid;
+		pid = fork();	//creo un proceso
+
+		//printf("** Proceso PID ejecutandose: %d / PID base: %d \n\n",pid,getpid());
+
+		if(pid == 0){	//se esta ejecutando el hijo
+
+			//el hijo se va a encargar de manejar las peticiones del cliente
+
+			//ENVIAMOS UN MENSAJE DE SALUDO AL CLIENTE
+			strcpy(buf,MSG_220);
+
+		    	if(write(sd2,buf,sizeof(buf)) == -1){
+	        		printf("Error: no se pudo enviar el mensaje.\n");
+		        	exit(-1);
+		    	}
+			
+			memset(buf,0,sizeof(buf));
+
+			//CORROBORAMOS QUE EL USUARIO SE LOGUEO CORRECTAMENTE
+			if(authenticate(sd2)==true){
+			
+				//RECIBIMOS LOS COMANDOS DEL CLIENTE
+				operate(sd2, c_port);	
+				
+			}
+
+			close(sd2);	//una vez que el cliente finaliza, cierro su socket asociado
+			exit(0); 	//destruyo el proceso hijo
+
+		}
+		else if(pid > 0){	//se esta ejecutando el padre
+
+			//el padre no necesita esperar al hijo, ya que debe seguir atendiendo pedidos de conexion entrantes
+
+			//el hijo es una copia del padre y, y el socket que se usa para comunicarse con el cliente esta siendo manejado por el hijo
+			//el padre no lo necesita
+			close(sd2);	
+			
+			//vuelvo al inicio del while para crear un nuevo socket con el cliente que se quiere sumar a la conexion y se repite el proceso
+			continue;
+
+		}
+		else{	//error
+			
+			//si hay un error, primero tengo que cerrar el socket creado
+			close(sd2);
+			perror("fork");
+			exit(EXIT_FAILURE);
+
+		}
+
+
+
+		//(temporal hasta que se resuelva el fork())
+		
+		/*
 		//ENVIAMOS UN MENSAJE DE SALUDO AL CLIENTE
 		strcpy(buf,MSG_220);
 
@@ -115,12 +183,14 @@ int main(int argc, char *argv[]){
 			
 		}
 		close(sd2);
+		*/
+
 	}
 	
 	
 	//SE CIERRA EL FICHERO DEL LADO DEL CLIENTE Y LUEGO DEL SERVIDOR
     	//close(sd2);
-    	close(sd);
+    	//close(sd);
 
 	return 0;
 
@@ -128,12 +198,12 @@ int main(int argc, char *argv[]){
 
 bool check_credentials(char *user, char *pass){
 
-	FILE *file;
+	FILE *file = NULL;
 	char *line = NULL;
 	size_t len = 0;
-	char buf[SIZE];
+	char buf[SIZE] = {'\0'};
 	
-	char *temp;
+	char *temp = NULL;
 	char delimitador[] = "\n";
 
 	//CREAMOS EL STRING CON EL USUARIO Y CONTRASEÑA DADO POR EL CLIENTE
@@ -175,10 +245,10 @@ bool check_credentials(char *user, char *pass){
 
 bool authenticate(int sd2){
 	
-	char buf[SIZE];
+	char buf[SIZE] = {'\0'};
 
-	char user[SIZE], pass[SIZE];
-        char pass_req[SIZE];    //MSG_331
+	char user[SIZE] = {'\0'}, pass[SIZE] = {'\0'};
+        char pass_req[SIZE] = {'\0'};    //MSG_331
         char *token = NULL;
 	
 	while(true){
@@ -263,7 +333,6 @@ bool authenticate(int sd2){
 		
 		memset(buf,0,sizeof(buf));
 		
-		//return false;
 	}
 
 	}
@@ -271,8 +340,10 @@ bool authenticate(int sd2){
 }
 
 //conexion con el cliente y envio del archivo
-void send_file(int fh, struct sockaddr_in sock, int readed, FILE *file, char *buf){
+void send_file(int fh, struct sockaddr_in sock, int readed, FILE *file){
 	
+	char buf[BYTES] = {'\0'};
+
 	if(connect(fh,(struct sockaddr*)&sock,sizeof(sock)) < 0){
         	printf("Error: no se pudo conectar con el cliente.\n");
                 exit(-1);
@@ -286,14 +357,14 @@ void send_file(int fh, struct sockaddr_in sock, int readed, FILE *file, char *bu
                 	printf("Error: no se pudo transferir el archivo.\n");
                         exit(-1);
                 }
-		memset(&buf,0,sizeof(char));
+		memset(buf,0,sizeof(buf));
 	}
-        memset(&buf,0,sizeof(char));
+        memset(buf,0,sizeof(buf));
 }
 
 void retr(int sd2, char *file_path, int c_port, bool act_mode, int fh_port, struct sockaddr_in port_addr){
 
-	FILE *file;
+	FILE *file = NULL;
 	long size;
 	char buf[BYTES]={'\0'};
 	struct stat sb;
@@ -319,6 +390,7 @@ void retr(int sd2, char *file_path, int c_port, bool act_mode, int fh_port, stru
 	}
 	
 	//CHEQUEAR QUE EL ARCHIVO EXISTA, SINO INFORMAR DEL ERROR AL CLIENTE
+	
 	file = fopen(file_path,"r");
 
 	if(file == NULL){
@@ -331,7 +403,8 @@ void retr(int sd2, char *file_path, int c_port, bool act_mode, int fh_port, stru
 		memset(buf,0,sizeof(buf));
 		exit(-1);
 	}
-	else{
+	else{	
+		
 		//SI PUDIMOS ABRIR EL FICHERO, LE ENVIAMOS AL CLIENTE EL TAMAÑO DEL ARCHIVO
 	
 		if(stat(file_path, &sb) == -1){
@@ -347,7 +420,7 @@ void retr(int sd2, char *file_path, int c_port, bool act_mode, int fh_port, stru
                         printf("Error: no se pudo enviar el mensaje(1).\n");
                         exit(-1);
                 }
-
+		
                 memset(buf,0,sizeof(buf));
 
 		//DELAY PARA EVITAR PROBLEMAS CON EL BUFFER
@@ -356,11 +429,11 @@ void retr(int sd2, char *file_path, int c_port, bool act_mode, int fh_port, stru
 		//establecemos conexion con el cliente y enviamos el archivo
 		
 		if(act_mode == false){
-			send_file(fh,server,readed,file,buf);
+			send_file(fh,server,readed,file);
 		}
 
 		else{
-			send_file(fh_port,port_addr,readed,file,buf);
+			send_file(fh_port,port_addr,readed,file);
 		}
 
 		sleep(1);
@@ -381,9 +454,155 @@ void retr(int sd2, char *file_path, int c_port, bool act_mode, int fh_port, stru
 	}
 }
 
+
+void cwd(int sd2, char *param){
+	
+	char buf[BYTES] = {'\0'};
+	
+	//sprintf(buf,PWD_DIR,param);
+	strcpy(buf,param);
+
+	if(write(sd2,buf,sizeof(buf)) < 0){
+		printf("Error: no se pudo enviar la direccion del directorio solicitado por el cliente.\n");
+		exit(-1);
+	}
+	memset(buf,0,sizeof(buf));
+
+}
+
+
+void nlist(int sd2, char *param){
+	
+	struct dirent **resultados = NULL;
+	int nroResultados;
+	char buf[BYTES] = {'\0'};
+	char temp[BYTES] = {'\0'};
+
+	//obtengo ficheros de la ruta indicada
+	nroResultados = scandir(param, &resultados, NULL, NULL);
+
+	//guardo la lista en el bufer
+	for (int i=0; i<nroResultados; i++){
+        	strcpy(temp,resultados[i]->d_name);
+		if(i==0){
+			strcpy(buf,temp);
+			strcat(buf,"\n");
+			memset(temp,0,sizeof(temp));
+		}
+		else{
+			strcat(buf,temp);
+			strcat(buf,"\n");
+			memset(temp,0,sizeof(temp));
+		}
+	}
+	
+	printf("\n%s\n",buf);
+	//envio la informacion al cliente
+        if(write(sd2,buf,sizeof(buf)) < 0){
+		printf("Error: no se puede enviar la lista de archivos.\n");
+		exit(-1);
+	}
+
+	//libero los variables almacenadas dinamicamente
+	for (int i=0; i<nroResultados; i++){
+		free(resultados[i]);
+		resultados[i] = NULL;
+	}
+	
+	memset(buf,0,sizeof(buf));
+	free(resultados);
+	resultados = NULL;
+
+}
+
+//TIENE CASI LO MISMO QUE DELDIR, POR LO QUE HAY QUE HACER UNA FUNCION PARA AMBAS
+void addDir(int sd2, char *param){
+	
+	char path[SIZE]={'\0'};
+	int ret;
+	char buf[SIZE] = {'\0'};
+	errno = 0;
+
+	strcat(path,PWD_CLIENTE);
+	strcat(path,param);
+	
+	//las banderas permiten que el user tenga permiso de lectura, escritura y ejecucion, respectivamente
+	ret = mkdir(path,S_IRUSR | S_IWUSR | S_IXUSR);
+	
+	//le aviso al cliente que se creó la carpeta, o no
+	if (ret == -1) {
+	        switch (errno) {
+        	    case EACCES:
+	                strcpy(buf,"the parent directory does not allow write");
+		    case EEXIST:
+	                strcpy(buf,"pathname already exists");
+        	    case ENAMETOOLONG:
+	                strcpy(buf,"pathname is too long");
+        	    default:
+			//perror("mkdir");
+                	//exit(EXIT_FAILURE);
+			strcpy(buf,"File already exists");
+        	}
+    	}
+	else{
+		sprintf(buf,"Directory '%s' created",param);
+	}
+	
+	if(write(sd2,buf,sizeof(buf)) < 0){
+                printf("Error: no se puede enviar la confirmacion.\n");
+                exit(-1);
+        }
+
+	memset(buf,0,sizeof(buf));
+	
+}
+
+
+void delDir(int sd2, char *param){
+	
+	char path[BYTES]={'\0'};
+        int ret;
+	char buf[SIZE] = {'\0'};
+	errno = 0;
+
+	strcat(path,PWD_CLIENTE);
+        strcat(path,param);
+        
+	ret = rmdir(path);
+
+        if (ret == -1) {
+                switch (errno) {
+                    case EACCES:
+                        strcpy(buf,"the parent directory does not allow write");
+                    case EEXIST:
+                        strcpy(buf,"pathname already exists");
+                    case ENAMETOOLONG:
+                        strcpy(buf,"pathname is too long");
+		    case ENOTDIR:
+			strcpy(buf,"A component of path is not a directory.");
+		    default:
+                        //perror("rmdir");
+                        //exit(EXIT_FAILURE);
+                	strcpy(buf,"No such file or directory");
+		}
+        }
+	else{
+                sprintf(buf,"Directory '%s' removed",param);
+        }
+
+        if(write(sd2,buf,sizeof(buf)) < 0){
+                printf("Error: no se puede enviar la confirmacion.\n");
+                exit(-1);
+        }
+
+        memset(buf,0,sizeof(buf));
+
+}
+
+
 void operate(int sd2, int c_port){
 
-	char oper[CMD_SIZE]={'\0'}, param[SIZE]={'\0'};
+	char oper[CMD_SIZE]={'\0'}, param[BYTES]={'\0'};
 	char buf[SIZE]={'\0'};
 	char *token = NULL;
 	
@@ -418,7 +637,7 @@ void operate(int sd2, int c_port){
 		
 			//variables para asociar el socket
 		        int ip[4];
-		        char ip_decimal[40];
+		        char ip_decimal[40] = {'\0'};
 			
 			act_mode = true;
 
@@ -453,6 +672,39 @@ void operate(int sd2, int c_port){
 			retr(sd2,param,c_port,act_mode,fh,port_addr);
 			act_mode = false;
 		}
+		else if(strcmp(oper, "CWD") == 0){
+			token = strtok(NULL," ");
+			strcpy(param,token);
+			printf("param ruta completa: %s\n",param);
+			token = NULL;
+			cwd(sd2,param);
+		}
+		else if(strcmp(oper, "NLIST") == 0){
+			
+			token = strtok(NULL," ");
+                        strcpy(param,token);
+                        token = NULL;
+			nlist(sd2,param);
+
+		}
+
+		//CREO QUE DEBERIA PASARLE LA DIRECCION DEL CLIENTE Y NO SOLO HACERLO COMO DEFINE, YA QUE EL CLIENTE PUEDE PEDIR CREAR UNA CARPETA DENTRO DE OTRA CARPETA
+		else if(strcmp(oper, "MKD") == 0){
+			
+			token = strtok(NULL," ");
+                        strcpy(param,token);
+                        token = NULL;
+                        addDir(sd2,param);
+
+		}
+		else if(strcmp(oper, "RMD") == 0){
+			
+			token = strtok(NULL," ");
+                        strcpy(param,token);
+                        token = NULL;
+                        delDir(sd2,param);
+
+		}
 		else if(strcmp(oper, "QUIT") == 0){
 			
 			//ENVIO AL CLIENTE EL MSG GOODBYE Y CIERRO LA CONEXION
@@ -469,9 +721,12 @@ void operate(int sd2, int c_port){
 			break;
 
 		}
-
+		memset(oper,0,sizeof(oper));
+		memset(param,0,sizeof(param));
 		memset(buf,0,sizeof(buf));
 	}
+	memset(oper,0,sizeof(oper));
+        memset(param,0,sizeof(param));
 	memset(buf,0,sizeof(buf));
 
 }

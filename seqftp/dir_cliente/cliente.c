@@ -17,7 +17,6 @@
 #define BYTES 512
 
 #define PORT "PORT %d,%d,%d,%d,%d,%d\r\n"
-#define PWD "/home/styvien/Documentos/Redes-II-2022/seqftp/dir_servidor/%s"
 
 int validar_nro(char*);
 int validar_ip(char*);
@@ -26,14 +25,21 @@ char* read_input();
 void authenticate(int);
 void get(int,char*,int);
 void quit(int);
-bool checkIfFileExists(char *);
+void cd(int);
+void dir(int);
+void addDir(int,char *);
+void delDir(int,char *);
+bool checkIfFileExists(char *,int);
 void operate(int,int);
+
+//ruta dinamica para moverme en el servidor
+char dpath[BYTES] = "/home/styvien/Documentos/Redes-II-2022/seqftp/dir_servidor/";
 
 int main(int argc, char *argv[]){
 
 	int sd;
 	int port;
-	char buf[BUFF_SIZE];
+	char buf[BUFF_SIZE] = {'\0'};
 	struct sockaddr_in server;
 	struct sockaddr_in client;
 
@@ -43,7 +49,7 @@ int main(int argc, char *argv[]){
 		exit(-1);
 	}
 	
-	char ip[16];
+	char ip[16] = {'\0'};
 	memset(ip,'\0',sizeof(ip));       
 	strcpy(ip,argv[1]);
 
@@ -96,7 +102,7 @@ int main(int argc, char *argv[]){
 	
 	//EL USUARIO PUEDE REALIZAR OPERACIONES
 	operate(sd,c_port);
-
+	
 	//SE CIERRA EL FICHERO DEL LADO DEL CLIENTE
 	close(sd);
 
@@ -119,7 +125,7 @@ int validar_nro(char *str){
 //Funcion que chequea si la IP tiene un formato valido
 int validar_ip(char *ip){
 	int num, dot = 0;
-	char *ptr;
+	char *ptr = NULL;
 	if(ip == NULL){
 		return 0;
 	}
@@ -150,7 +156,7 @@ int validar_ip(char *ip){
 //ENVIO LOS DATOS AL SERVIDOR
 void send_msg(int sd, char *oper, char *param){
 	
-	char buff[BUFF_SIZE];
+	char buff[BUFF_SIZE] = {'\0'};
 
 	if(param != NULL){
 		sprintf(buff, "%s %s\r\n",oper,param);
@@ -184,8 +190,8 @@ char* read_input(){
 
 void authenticate(int sd){
 	
-	char *input;
-	char buf[BUFF_SIZE];
+	char *input = NULL;
+	char buf[BUFF_SIZE] = {'\0'};
 	char *token = NULL;
 
 	bool confirm_log = false;
@@ -251,15 +257,15 @@ void authenticate(int sd){
 
 void get(int sd, char *file_name, int c_port){
 
-	FILE *file;
-	char buf[BYTES];
+	FILE *file = NULL;
+	char buf[BYTES] = {'\0'};
 
 	//para crear el canal de datos el cliente toma el rol del servidor
 	
 	int fh_c, fh_s;			//file handler del cliente y servidor
 	struct sockaddr_in client;
 	int p1, p2;			//para los args del PORT
-	int readed;			//lo leido por el cliente cuando escribe en el archivo
+	int readed = 0;			//lo leido por el cliente cuando escribe en el archivo
 
 	//asignamos puerto e ip al socket
 	c_port+=1;
@@ -305,7 +311,7 @@ void get(int sd, char *file_name, int c_port){
                 memset(buf,0,sizeof(buf));
 		
 		if(read(sd,buf,sizeof(buf)) < 0){
-	                printf("Error: no se pudo leer el mensaje del servidor.\n");
+			printf("Error: no se pudo leer el mensaje del servidor.\n");
                 	exit(-1);
         	}
 		printf("Mensaje del servidor: %s\n\n",buf);
@@ -330,7 +336,6 @@ void get(int sd, char *file_name, int c_port){
         }
 
         printf("Mensaje del servidor: %s\n",buf);
-	
         memset(buf,0,sizeof(buf));
 
 	//aceptamos la peticion de conexion del servidor, una vez comencemos la transferencia del archivo
@@ -377,7 +382,7 @@ void get(int sd, char *file_name, int c_port){
 
 void quit(int sd){
 	
-	char buf[BUFF_SIZE];
+	char buf[BUFF_SIZE] = {'\0'};
 
 	send_msg(sd,"QUIT",NULL);
 
@@ -391,25 +396,127 @@ void quit(int sd){
 	memset(buf,0,sizeof(buf));
 }
 
-bool checkIfFileExists(char *param){
+bool checkIfFileExists(char *param,int bit){
 	struct stat buffer;
-	char path[BUFF_SIZE];
-	sprintf(path,PWD,param);
-    	int exist = stat(path,&buffer);
-   	if(exist == 0){
-        	return true;
-	}else{  
-        	return false;
+	
+	char temp[BYTES] = {'\0'};
+
+	if(strcmp(param,"..") == 0){
+		memset(dpath,0,sizeof(0));
+		strcpy(dpath,"/home/styvien/Documentos/Redes-II-2022/seqftp/dir_servidor");
+		return true;
 	}
+	else{
+
+		strcpy(temp,dpath);
+
+	    	strcat(dpath,param);
+		
+		int exist = stat(dpath,&buffer);
+	   	
+		if(bit == 0){
+			memset(dpath,0,sizeof(dpath));
+			strcpy(dpath,temp);
+		}
+		
+		printf("\n%s\n",dpath);
+
+		if(exist == 0){
+	        	return true;
+		}else{  
+	        	memset(dpath,0,sizeof(dpath));
+			strcpy(dpath,temp);
+			return false;
+		}
+		
+		memset(temp,0,sizeof(temp));
+
+	}
+
 }
+
+void help(){
+
+	printf("\n -> get: pide un archivo existente en el servidor, y el servidor lo retorna al cliente.\n -> mkdir: crea un directorio del lado del cliente.\n -> rmdir: elimina un directorio del lado del cliente.\n -> dir: lista los archivos de un directorio del lado del servidor.\n -> cd: permite movernos por directorios del lado del servidor.\n -> quit: cortamos la comunicacion con el servidor.\n\n");
+
+}
+
+//CREO QUE DEBO RETORNAR LA RUTA DE ALGUNA MANERA (PARA EL DIR U OTROS MOVIMIENTOS)
+void cd(int sd){
+	
+	char buf[BYTES] = {'\0'};
+
+	send_msg(sd,"CWD",dpath);
+
+	if(read(sd,buf,sizeof(buf)) < 0){
+		printf("Error: no pudo leerse la respuesta del servidor (cd).\n");
+	}
+
+	printf("\nMensaje del servidor: %s\n",buf);
+	memset(buf,0,sizeof(buf));
+}
+
+
+void dir(int sd){
+	
+	char buf[BYTES] = {'\0'};
+
+	printf("\n%s\n",dpath);
+        send_msg(sd,"NLIST",dpath);
+	
+	if(read(sd,buf,sizeof(buf)) < 0){
+        	printf("Error: no se puede leer la lista de archivos.\n");
+                exit(-1);
+        }
+	
+	printf("\n%s\n",buf);
+	memset(buf,0,sizeof(buf));
+}
+
+//TENGO QUE CHEQUEAR POR LAS DUDAS DONDE QUIERE CREAR LA CARPETA, Y PASARLE CORRECTAMENTE EL PATH
+
+void addDir(int sd, char *param){
+	char buf[BUFF_SIZE] = {'\0'};
+	
+	//para crear el directorio, necesito el path del cliente
+	//dpath = PWD_CLIENTE;
+
+        send_msg(sd,"MKD",param);
+	
+	if(read(sd,buf,sizeof(buf)) < 0){
+                printf("Error: no se puede recibir la confirmacion del servidor.\n");
+                exit(-1);
+        }
+        printf("\n%s\n",buf);
+
+        memset(buf,0,sizeof(buf));	
+}
+
+
+void delDir(int sd, char *param){
+	
+	char buf[BUFF_SIZE] = {'\0'};
+	
+	//dpath = PWD_CLIENTE;
+
+        send_msg(sd,"RMD",param);
+	
+        if(read(sd,buf,sizeof(buf)) < 0){
+                printf("Error: no se puede recibir la confirmacion del servidor.\n");
+                exit(-1);
+        }
+        printf("\n%s\n",buf);
+        memset(buf,0,sizeof(buf));
+}
+
 
 void operate(int sd, int c_port){
 
-	char *input, *oper, *param;
+	char *input = NULL; char *oper = NULL; char *param = NULL;
 
 	while(true){
-
-		printf("Ingrese una operacion ('get file_name.txt' | 'quit'): ");
+		printf("\nSi no sabe que significa cada operacion, escriba 'help'.\n");
+		printf("\nIngrese una operacion ('get file_name.txt' | 'mkdir directory_name' | 'rmdir directory_name' | 'dir' | 'cd directory_name' | 'quit'): ");
 
 		input = read_input();
 
@@ -422,7 +529,7 @@ void operate(int sd, int c_port){
 		if(strcmp(oper,"get") == 0){
 			param = strtok(NULL, " ");
 			
-			if(checkIfFileExists(param) == true){
+			if(checkIfFileExists(param,0) == true){
 				get(sd,param,c_port);
     			}
 			else{
@@ -432,16 +539,56 @@ void operate(int sd, int c_port){
 			}
 		
 		}
+		else if(strcmp(oper,"dir") == 0){
+			dir(sd);
+			
+		}
+		else if(strcmp(oper,"cd") == 0){
+			
+			param = strtok(NULL, " ");
+			
+			if(checkIfFileExists(param,1) == true){
+				strcat(dpath,"/");
+				cd(sd);
+			}
+			else{
+				printf("\nIngrese correctamente el nombre del directorio.\n\n");
+			}
+
+		}
+		else if(strcmp(oper,"mkdir") == 0){
+			
+			param = strtok(NULL, " ");
+			
+			printf("param: %s\n",param);
+			
+                        addDir(sd,param);
+                        
+		}
+		else if(strcmp(oper,"rmdir") == 0){
+			
+			param = strtok(NULL, " ");
+			
+                        printf("param: %s\n",param);
+			
+                        delDir(sd,param);
+
+		}
+		else if(strcmp(oper,"help") == 0){
+			help();
+
+		}
 		else if(strcmp(oper,"quit") == 0){
 			
 			quit(sd);
-			
+
 			break;
 		}
 		else{
 			printf("Error: comando desconocido.\n\n");
 		}
 		free(input);
+		oper = NULL; param = NULL;
 	}
 	free(input);
 
