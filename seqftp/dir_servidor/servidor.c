@@ -2,8 +2,8 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
-#include <dirent.h>
 
+#include <dirent.h>
 #include <stdbool.h>
 #include <stdarg.h>
 #include <err.h>
@@ -28,9 +28,7 @@
 
 #define BYTES 512
 #define SIZE 100
-#define CMD_SIZE 4 	//tamaño de los comandos para las operaciones
-
-#define PWD_CLIENTE "/home/styvien/Documentos/Redes-II-2022/seqftp/dir_cliente/"
+#define CMDSIZE 4 	//tamaño de los comandos para las operaciones
 
 bool chech_credentials(char*,char*);
 bool authenticate(int);
@@ -101,11 +99,14 @@ int main(int argc, char *argv[]){
 		strcpy(ip_client, inet_ntoa(addr.sin_addr));
 		
 		inet_ntop(AF_INET,&(addr.sin_addr),ip,INET_ADDRSTRLEN);
-		//printf("Conexion establecida con IP (servidor): %s / PORT (servidor): %d e IP (cliente): %s / PORT (cliente): %d\n",ip,port,ip_client,ntohs(addr.sin_port));
 		int c_port = ntohs(addr.sin_port);
+
+		//printf("Conexion establecida con IP (servidor): %s / PORT (servidor): %d e IP (cliente): %s / PORT (cliente): %d\n",ip,port,ip_client,ntohs(addr.sin_port));
+
 		
 
 		//INICIO DE LA CONCURRENCIA CON FORK()
+
 		//printf("** Proceso PID inicial: %d\n\n",getpid());
 
 		pid_t pid;
@@ -160,37 +161,7 @@ int main(int argc, char *argv[]){
 
 		}
 
-
-
-		//(temporal hasta que se resuelva el fork())
-		
-		/*
-		//ENVIAMOS UN MENSAJE DE SALUDO AL CLIENTE
-		strcpy(buf,MSG_220);
-
-	    	if(write(sd2,buf,sizeof(buf)) == -1){
-        		printf("Error: no se pudo enviar el mensaje.\n");
-	        	exit(-1);
-	    	}
-		
-		memset(buf,0,sizeof(buf));
-
-		//CORROBORAMOS QUE EL USUARIO SE LOGUEO CORRECTAMENTE
-		if(authenticate(sd2)==true){
-		
-			//RECIBIMOS LOS COMANDOS DEL CLIENTE
-			operate(sd2, c_port);	
-			
-		}
-		close(sd2);
-		*/
-
 	}
-	
-	
-	//SE CIERRA EL FICHERO DEL LADO DEL CLIENTE Y LUEGO DEL SERVIDOR
-    	//close(sd2);
-    	//close(sd);
 
 	return 0;
 
@@ -518,34 +489,32 @@ void nlist(int sd2, char *param){
 //TIENE CASI LO MISMO QUE DELDIR, POR LO QUE HAY QUE HACER UNA FUNCION PARA AMBAS
 void addDir(int sd2, char *param){
 	
-	char path[SIZE]={'\0'};
 	int ret;
 	char buf[SIZE] = {'\0'};
 	errno = 0;
 
-	strcat(path,PWD_CLIENTE);
-	strcat(path,param);
-	
 	//las banderas permiten que el user tenga permiso de lectura, escritura y ejecucion, respectivamente
-	ret = mkdir(path,S_IRUSR | S_IWUSR | S_IXUSR);
+	ret = mkdir(param,S_IRUSR | S_IWUSR | S_IXUSR);
 	
 	//le aviso al cliente que se creó la carpeta, o no
 	if (ret == -1) {
 	        switch (errno) {
         	    case EACCES:
 	                strcpy(buf,"the parent directory does not allow write");
+	                break;
 		    case EEXIST:
 	                strcpy(buf,"pathname already exists");
+	                break;
         	    case ENAMETOOLONG:
 	                strcpy(buf,"pathname is too long");
+	                break;
         	    default:
-			//perror("mkdir");
-                	//exit(EXIT_FAILURE);
-			strcpy(buf,"File already exists");
+			perror("mkdir");
+                	exit(EXIT_FAILURE);
         	}
     	}
 	else{
-		sprintf(buf,"Directory '%s' created",param);
+		sprintf(buf,"Directory created");
 	}
 	
 	if(write(sd2,buf,sizeof(buf)) < 0){
@@ -560,34 +529,32 @@ void addDir(int sd2, char *param){
 
 void delDir(int sd2, char *param){
 	
-	char path[BYTES]={'\0'};
         int ret;
 	char buf[SIZE] = {'\0'};
 	errno = 0;
 
-	strcat(path,PWD_CLIENTE);
-        strcat(path,param);
-        
-	ret = rmdir(path);
+	ret = rmdir(param);
 
         if (ret == -1) {
                 switch (errno) {
                     case EACCES:
                         strcpy(buf,"the parent directory does not allow write");
+                        break;
                     case EEXIST:
                         strcpy(buf,"pathname already exists");
+                        break;
                     case ENAMETOOLONG:
                         strcpy(buf,"pathname is too long");
+                        break;
 		    case ENOTDIR:
 			strcpy(buf,"A component of path is not a directory.");
 		    default:
-                        //perror("rmdir");
-                        //exit(EXIT_FAILURE);
-                	strcpy(buf,"No such file or directory");
+                        perror("rmdir");
+                        exit(EXIT_FAILURE);
 		}
         }
 	else{
-                sprintf(buf,"Directory '%s' removed",param);
+                sprintf(buf,"Directory removed");
         }
 
         if(write(sd2,buf,sizeof(buf)) < 0){
@@ -602,7 +569,7 @@ void delDir(int sd2, char *param){
 
 void operate(int sd2, int c_port){
 
-	char oper[CMD_SIZE]={'\0'}, param[BYTES]={'\0'};
+	char oper[CMDSIZE]={'\0'}, param[BYTES]={'\0'};
 	char buf[SIZE]={'\0'};
 	char *token = NULL;
 	

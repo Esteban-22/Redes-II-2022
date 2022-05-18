@@ -2,18 +2,18 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+
 #include <ctype.h>
 #include <stdbool.h>
 #include <termios.h>
+#include <fcntl.h>
 
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <sys/stat.h>
 
-#include <fcntl.h>
-
-#define BUFF_SIZE 100
+#define BUFSIZE 100
 #define BYTES 512
 
 #define PORT "PORT %d,%d,%d,%d,%d,%d\r\n"
@@ -27,8 +27,8 @@ void get(int,char*,int);
 void quit(int);
 void cd(int);
 void dir(int);
-void addDir(int,char *);
-void delDir(int,char *);
+void addDir(int);
+void delDir(int);
 bool checkIfFileExists(char *,int);
 void operate(int,int);
 
@@ -39,7 +39,7 @@ int main(int argc, char *argv[]){
 
 	int sd;
 	int port;
-	char buf[BUFF_SIZE] = {'\0'};
+	char buf[BUFSIZE] = {'\0'};
 	struct sockaddr_in server;
 	struct sockaddr_in client;
 
@@ -156,7 +156,7 @@ int validar_ip(char *ip){
 //ENVIO LOS DATOS AL SERVIDOR
 void send_msg(int sd, char *oper, char *param){
 	
-	char buff[BUFF_SIZE] = {'\0'};
+	char buff[BUFSIZE] = {'\0'};
 
 	if(param != NULL){
 		sprintf(buff, "%s %s\r\n",oper,param);
@@ -177,8 +177,8 @@ void send_msg(int sd, char *oper, char *param){
 //LEO LO QUE EL CLIENTE INGRESE POR TECLADO
 char* read_input(){
 
-	char *input = malloc(BUFF_SIZE);
-	if(fgets(input,BUFF_SIZE,stdin)){
+	char *input = malloc(BUFSIZE);
+	if(fgets(input,BUFSIZE,stdin)){
 		if(strlen(input) <= 1){
 			return NULL;
 		}else{
@@ -191,7 +191,7 @@ char* read_input(){
 void authenticate(int sd){
 	
 	char *input = NULL;
-	char buf[BUFF_SIZE] = {'\0'};
+	char buf[BUFSIZE] = {'\0'};
 	char *token = NULL;
 
 	bool confirm_log = false;
@@ -382,7 +382,7 @@ void get(int sd, char *file_name, int c_port){
 
 void quit(int sd){
 	
-	char buf[BUFF_SIZE] = {'\0'};
+	char buf[BUFSIZE] = {'\0'};
 
 	send_msg(sd,"QUIT",NULL);
 
@@ -475,36 +475,34 @@ void dir(int sd){
 
 //TENGO QUE CHEQUEAR POR LAS DUDAS DONDE QUIERE CREAR LA CARPETA, Y PASARLE CORRECTAMENTE EL PATH
 
-void addDir(int sd, char *param){
-	char buf[BUFF_SIZE] = {'\0'};
+void addDir(int sd){
 	
-	//para crear el directorio, necesito el path del cliente
-	//dpath = PWD_CLIENTE;
+	char buf[BYTES] = {'\0'};
 
-        send_msg(sd,"MKD",param);
+        send_msg(sd,"MKD",dpath);
 	
 	if(read(sd,buf,sizeof(buf)) < 0){
                 printf("Error: no se puede recibir la confirmacion del servidor.\n");
                 exit(-1);
         }
+        
         printf("\n%s\n",buf);
+        memset(buf,0,sizeof(buf));
 
-        memset(buf,0,sizeof(buf));	
 }
 
 
-void delDir(int sd, char *param){
+void delDir(int sd){
 	
-	char buf[BUFF_SIZE] = {'\0'};
+	char buf[BYTES] = {'\0'};
 	
-	//dpath = PWD_CLIENTE;
-
-        send_msg(sd,"RMD",param);
+        send_msg(sd,"RMD",dpath);
 	
         if(read(sd,buf,sizeof(buf)) < 0){
                 printf("Error: no se puede recibir la confirmacion del servidor.\n");
                 exit(-1);
         }
+        
         printf("\n%s\n",buf);
         memset(buf,0,sizeof(buf));
 }
@@ -513,10 +511,11 @@ void delDir(int sd, char *param){
 void operate(int sd, int c_port){
 
 	char *input = NULL; char *oper = NULL; char *param = NULL;
+	char temp[BYTES] = {'\0'};
 
 	while(true){
 		printf("\nSi no sabe que significa cada operacion, escriba 'help'.\n");
-		printf("\nIngrese una operacion ('get file_name.txt' | 'mkdir directory_name' | 'rmdir directory_name' | 'dir' | 'cd directory_name' | 'quit'): ");
+		printf("\nIngrese una operacion:\n -> 'get file_name.txt'\n -> 'mkdir directory_name'\n -> 'rmdir directory_name'\n -> 'dir'\n -> 'cd directory_name'\n -> 'quit'\n\n -> ");
 
 		input = read_input();
 
@@ -558,20 +557,36 @@ void operate(int sd, int c_port){
 		}
 		else if(strcmp(oper,"mkdir") == 0){
 			
+			strcpy(temp,dpath);
+
 			param = strtok(NULL, " ");
 			
-			printf("param: %s\n",param);
-			
-                        addDir(sd,param);
+			strcat(dpath,param);
+			strcat(dpath,"/");
+			printf("dpath con param: %s",dpath);
+
+                        addDir(sd);
+
+                        memset(dpath,0,sizeof(dpath));
+                        strcpy(dpath,temp);
+                        memset(temp,0,sizeof(temp));
                         
 		}
 		else if(strcmp(oper,"rmdir") == 0){
 			
+			strcpy(temp,dpath);
+
 			param = strtok(NULL, " ");
 			
                         printf("param: %s\n",param);
 			
-                        delDir(sd,param);
+			strcat(dpath,param);
+			strcat(dpath,"/");
+                        delDir(sd);
+
+                        memset(dpath,0,sizeof(dpath));
+                        strcpy(dpath,temp);
+                        memset(temp,0,sizeof(temp));
 
 		}
 		else if(strcmp(oper,"help") == 0){
