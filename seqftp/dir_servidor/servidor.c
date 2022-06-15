@@ -1,20 +1,20 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
-#include <string.h>
-
-#include <dirent.h>
 #include <stdbool.h>
-#include <stdarg.h>
+#include <string.h>
+#include <unistd.h>
+
+#include <arpa/inet.h>
+#include <dirent.h>
 #include <err.h>
 #include <errno.h>
-
+#include <netinet/in.h>
+#include <stdarg.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
-#include <sys/wait.h>
-#include <arpa/inet.h>
-#include <netinet/in.h>
 
+#define SIZE 100
+#define BYTES 512
 
 #define MSG_220 "220 srvftp version 1.0\r\n"
 #define MSG_331 "331 Password required for %s\r\n"
@@ -26,8 +26,6 @@
 #define MSG_226 "226 Transfer complete\r\n"
 #define MSG_200 "200 PORT command successful\r\n"
 
-#define BYTES 512
-#define SIZE 100
 #define CMDSIZE 4 	//tamaño de los comandos para las operaciones
 
 bool chech_credentials(char*,char*);
@@ -39,6 +37,9 @@ void addDir(int,char*);
 void delDir(int,char*);
 void operate(int,int);
 void send_file(int,struct sockaddr_in,int,FILE*);
+
+//ruta dinamica para encontrar archivos dentro de carpetas
+char dpath[BYTES] = {'\0'};
 
 int main(int argc, char *argv[]){
 
@@ -344,6 +345,8 @@ void retr(int sd2, char *file_path, int c_port, bool act_mode, int fh_port, stru
 	struct sockaddr_in server;
 	int readed = 0;
 
+	char dpath_temp[BYTES]={'\0'};
+
 	if(act_mode == false){
 
 		//obtenemos los datos del cliente
@@ -362,7 +365,11 @@ void retr(int sd2, char *file_path, int c_port, bool act_mode, int fh_port, stru
 	
 	//CHEQUEAR QUE EL ARCHIVO EXISTA, SINO INFORMAR DEL ERROR AL CLIENTE
 	
-	file = fopen(file_path,"r");
+	//dpath_temp guarda la ruta incluyendo al archivo, mientras que dpath guarda la ruta sin el archivo
+	strcat(dpath_temp,dpath);
+	strcat(dpath_temp,file_path);
+
+	file = fopen(dpath_temp,"r");
 
 	if(file == NULL){
         	strcpy(buf,MSG_550);
@@ -378,7 +385,7 @@ void retr(int sd2, char *file_path, int c_port, bool act_mode, int fh_port, stru
 		
 		//SI PUDIMOS ABRIR EL FICHERO, LE ENVIAMOS AL CLIENTE EL TAMAÑO DEL ARCHIVO
 	
-		if(stat(file_path, &sb) == -1){
+		if(stat(dpath_temp, &sb) == -1){
 			perror("stat");
 			exit(-1);
 		}
@@ -386,14 +393,14 @@ void retr(int sd2, char *file_path, int c_port, bool act_mode, int fh_port, stru
 		size = sb.st_size;
 
 		sprintf(buf,MSG_299,file_path,size);
-
+	
 		if(write(sd2,buf,sizeof(buf)) == -1){
                         printf("Error: no se pudo enviar el mensaje(1).\n");
                         exit(-1);
                 }
 		
                 memset(buf,0,sizeof(buf));
-
+	
 		//DELAY PARA EVITAR PROBLEMAS CON EL BUFFER
 		sleep(1);
 		
@@ -419,10 +426,12 @@ void retr(int sd2, char *file_path, int c_port, bool act_mode, int fh_port, stru
                 }
 		
 		memset(buf,0,sizeof(buf));
+		memset(dpath_temp,0,sizeof(dpath_temp));
 		fclose(file);
 		close(fh);
 		close(fh_port);
 	}
+
 }
 
 
@@ -430,8 +439,16 @@ void cwd(int sd2, char *param){
 	
 	char buf[BYTES] = {'\0'};
 	
-	//sprintf(buf,PWD_DIR,param);
 	strcpy(buf,param);
+	
+	//esto sirve si no creo ni envio archivos en o hacia el servidor
+	if(strcmp(dpath,param) > 0){	//si hago cd .. borro el contenido de dpath y lo reemplazo por param
+		memset(dpath,0,sizeof(dpath));
+		strcpy(dpath,param);
+	}
+	else{
+		strcpy(dpath,param);
+	}
 
 	if(write(sd2,buf,sizeof(buf)) < 0){
 		printf("Error: no se pudo enviar la direccion del directorio solicitado por el cliente.\n");
@@ -467,7 +484,6 @@ void nlist(int sd2, char *param){
 		}
 	}
 	
-	printf("\n%s\n",buf);
 	//envio la informacion al cliente
         if(write(sd2,buf,sizeof(buf)) < 0){
 		printf("Error: no se puede enviar la lista de archivos.\n");
@@ -570,14 +586,14 @@ void delDir(int sd2, char *param){
 void operate(int sd2, int c_port){
 
 	char oper[CMDSIZE]={'\0'}, param[BYTES]={'\0'};
-	char buf[SIZE]={'\0'};
+	char buf[BYTES]={'\0'};
 	char *token = NULL;
 	
 	//para el comando PORT
 	struct sockaddr_in port_addr;
         int fh;
 	bool act_mode = false;
-	char buf_temp[SIZE]={'\0'};
+	char buf_temp[BYTES]={'\0'};
 
 	while(true){
 		
@@ -596,7 +612,6 @@ void operate(int sd2, int c_port){
 		//ELEGIMOS LA BIFURCACION EN BASE AL COMANDO RECIBIDO
 		
 		if(strncmp(oper, "PORT",4) == 0){
-
 
 			//variables usadas para obtener los datos del PORT
         		int port[2];
@@ -633,18 +648,21 @@ void operate(int sd2, int c_port){
 
 		}
 		else if(strcmp(oper, "RETR") == 0){
+			
 			token = strtok(NULL," ");
         		strcpy(param,token);
 			token = NULL;
 			retr(sd2,param,c_port,act_mode,fh,port_addr);
 			act_mode = false;
+
 		}
 		else if(strcmp(oper, "CWD") == 0){
+			
 			token = strtok(NULL," ");
 			strcpy(param,token);
-			printf("param ruta completa: %s\n",param);
 			token = NULL;
 			cwd(sd2,param);
+
 		}
 		else if(strcmp(oper, "NLIST") == 0){
 			
@@ -691,10 +709,12 @@ void operate(int sd2, int c_port){
 		memset(oper,0,sizeof(oper));
 		memset(param,0,sizeof(param));
 		memset(buf,0,sizeof(buf));
+		memset(buf_temp,0,sizeof(buf_temp));
 	}
 	memset(oper,0,sizeof(oper));
         memset(param,0,sizeof(param));
 	memset(buf,0,sizeof(buf));
+	memset(buf_temp,0,sizeof(buf_temp));
 
 }
 
