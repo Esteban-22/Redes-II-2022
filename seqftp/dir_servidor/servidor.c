@@ -12,10 +12,14 @@
 #include <stdarg.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 
+//TAMAÑOS DEFINIDOS PARA ARREGLOS
 #define SIZE 100
 #define BYTES 512
 
+//MENSAJES PARA EL CLIENTE
 #define MSG_220 "220 srvftp version 1.0\r\n"
 #define MSG_331 "331 Password required for %s\r\n"
 #define MSG_230 "230 User %s logged in\r\n"
@@ -26,8 +30,10 @@
 #define MSG_226 "226 Transfer complete\r\n"
 #define MSG_200 "200 PORT command successful\r\n"
 
-#define CMDSIZE 4 	//tamaño de los comandos para las operaciones
+//USADO POR UN ARREGLO QUE ALOJA LOS COMANDOS EN FORMATO STRING
+#define CMDSIZE 4
 
+//PROTOTIPOS
 bool chech_credentials(char*,char*);
 bool authenticate(int);
 void retr(int,char*,int,bool,int,struct sockaddr_in);
@@ -38,7 +44,7 @@ void delDir(int,char*);
 void operate(int,int);
 void send_file(int,struct sockaddr_in,int,FILE*);
 
-//ruta dinamica para encontrar archivos dentro de carpetas
+//RUTA DINAMICA (QUE CAMBIA) PARA ENCONTRAR ARCHIVOS DENTRO DE CARPETAS
 char dpath[BYTES] = {'\0'};
 
 int main(int argc, char *argv[]){
@@ -57,6 +63,7 @@ int main(int argc, char *argv[]){
 		exit(-1);
 	}
 
+	//GUARDAMOS EL PUERTO
 	port = atoi(argv[1]);
 
 	//ASIGNAMOS PUERTO E IP AL SOCKET
@@ -65,9 +72,7 @@ int main(int argc, char *argv[]){
 	addr.sin_addr.s_addr = INADDR_ANY;
 
 	//SE ABRE EL SOCKET
-	sd = socket(AF_INET,SOCK_STREAM,0);
-
-	if(sd < 0){
+	if((sd = socket(AF_INET,SOCK_STREAM,0)) < 0){
 		printf("Error de apertura del socket.\n");
 		exit(-1);
 	}
@@ -93,7 +98,6 @@ int main(int argc, char *argv[]){
 			exit(-1);
 		}
 		
-		
 		//SE MUESTRAN LAS IP Y PUERTO DE AMBOS	
 		char ip[INET_ADDRSTRLEN] = {'\0'};
 		char ip_client[INET_ADDRSTRLEN] = {'\0'};
@@ -102,8 +106,11 @@ int main(int argc, char *argv[]){
 		inet_ntop(AF_INET,&(addr.sin_addr),ip,INET_ADDRSTRLEN);
 		int c_port = ntohs(addr.sin_port);
 
-		//printf("Conexion establecida con IP (servidor): %s / PORT (servidor): %d e IP (cliente): %s / PORT (cliente): %d\n",ip,port,ip_client,ntohs(addr.sin_port));
-
+	/*
+		printf(	"Conexion establecida con IP (servidor): %s "
+			"/ PORT (servidor): %d e IP (cliente): %s "
+			"/ PORT (cliente): %d\n",ip,port,ip_client,ntohs(addr.sin_port));
+	*/
 		
 
 		//INICIO DE LA CONCURRENCIA CON FORK()
@@ -144,8 +151,10 @@ int main(int argc, char *argv[]){
 		else if(pid > 0){	//se esta ejecutando el padre
 
 			//el padre no necesita esperar al hijo, ya que debe seguir atendiendo pedidos de conexion entrantes
+			//aun asi, cuando el hijo termina, es necesario ignorar su señal enviada, y evitar asi que se convierta en zombie
+			signal(SIGCHLD,SIG_IGN);
 
-			//el hijo es una copia del padre y, y el socket que se usa para comunicarse con el cliente esta siendo manejado por el hijo
+			//el hijo es una copia del padre, por lo tanto, el socket que se usa para comunicarse con el cliente esta siendo manejado por el hijo
 			//el padre no lo necesita
 			close(sd2);	
 			
@@ -168,6 +177,7 @@ int main(int argc, char *argv[]){
 
 }
 
+//REVISAMOS LAS CREDENCIALES QUE EL CLIENTE NOS ENVIÓ
 bool check_credentials(char *user, char *pass){
 
 	FILE *file = NULL;
@@ -185,7 +195,7 @@ bool check_credentials(char *user, char *pass){
 	//CHEQUEAMOS QUE EXISTA EL ARCHIVO 'ftpusers.txt'
 	file = fopen("ftpusers.txt","r");
 	if(file == NULL){
-		perror("Error: ");	//errno("Errno: %d",errno);
+		perror("Error: ");	//o sino errno("Errno: %d",errno);
 		return false;
 	}
 	
@@ -254,7 +264,7 @@ bool authenticate(int sd2){
         }
 
         memset(buf,0,sizeof(buf));
-	token = NULL;			//chequear que este limpio
+	token = NULL;
 
 	//CAPTURAMOS LA CONTRASEÑA DEL CLIENTE
 	if(read(sd2,buf,sizeof(buf)) == -1){
@@ -311,7 +321,7 @@ bool authenticate(int sd2){
 	return false;
 }
 
-//conexion con el cliente y envio del archivo
+//CONEXION CON EL CLIENTE (QUE ACTUA COMO SERVIDOR) Y ENVIO DEL ARCHIVO
 void send_file(int fh, struct sockaddr_in sock, int readed, FILE *file){
 	
 	char buf[BYTES] = {'\0'};
@@ -341,7 +351,7 @@ void retr(int sd2, char *file_path, int c_port, bool act_mode, int fh_port, stru
 	char buf[BYTES]={'\0'};
 	struct stat sb;
 	
-	int fh; //se usa para la conexion con el cliente
+	int fh; 			//se usa para la conexion con el cliente
 	struct sockaddr_in server;
 	int readed = 0;
 
@@ -349,7 +359,7 @@ void retr(int sd2, char *file_path, int c_port, bool act_mode, int fh_port, stru
 
 	if(act_mode == false){
 
-		//obtenemos los datos del cliente
+		//OBTENEMOS LOS DATOS DEL CLIENTE
 		c_port+=1;
 		server.sin_family = AF_INET;
 		server.sin_port = htons(c_port);
@@ -404,8 +414,7 @@ void retr(int sd2, char *file_path, int c_port, bool act_mode, int fh_port, stru
 		//DELAY PARA EVITAR PROBLEMAS CON EL BUFFER
 		sleep(1);
 		
-		//establecemos conexion con el cliente y enviamos el archivo
-		
+		//ESTABLECIMOS CONEXION CON EL CLIENTE Y ENVIAMOS EL ARCHIVO
 		if(act_mode == false){
 			send_file(fh,server,readed,file);
 		}
@@ -417,7 +426,6 @@ void retr(int sd2, char *file_path, int c_port, bool act_mode, int fh_port, stru
 		sleep(1);
 
 		//ENVIAMOS UN MENSAJE DE QUE SE COMPLETO LA TRANSFERENCIA
-		
 		strcpy(buf,MSG_226);
 
 		if(write(sd2,buf,sizeof(buf)) == -1){
@@ -441,7 +449,7 @@ void cwd(int sd2, char *param){
 	
 	strcpy(buf,param);
 	
-	//esto sirve si no creo ni envio archivos en o hacia el servidor
+	//NOTA: esto sirve si no creo ni envio archivos en o hacia el servidor
 	if(strcmp(dpath,param) > 0){	//si hago cd .. borro el contenido de dpath y lo reemplazo por param
 		memset(dpath,0,sizeof(dpath));
 		strcpy(dpath,param);
@@ -466,10 +474,10 @@ void nlist(int sd2, char *param){
 	char buf[BYTES] = {'\0'};
 	char temp[BYTES] = {'\0'};
 
-	//obtengo ficheros de la ruta indicada
+	//OBTENGO FICHEROS EN LA RUTA INDICADA
 	nroResultados = scandir(param, &resultados, NULL, NULL);
 
-	//guardo la lista en el bufer
+	//GUARDO LA LISTA EN EL BUFFER
 	for (int i=0; i<nroResultados; i++){
         	strcpy(temp,resultados[i]->d_name);
 		if(i==0){
@@ -484,13 +492,13 @@ void nlist(int sd2, char *param){
 		}
 	}
 	
-	//envio la informacion al cliente
+	//ENVIO LA INFORMACION AL CLIENTE
         if(write(sd2,buf,sizeof(buf)) < 0){
 		printf("Error: no se puede enviar la lista de archivos.\n");
 		exit(-1);
 	}
 
-	//libero los variables almacenadas dinamicamente
+	//LIBERO LOS VALORES ALMACENADOS DINAMICAMENTE
 	for (int i=0; i<nroResultados; i++){
 		free(resultados[i]);
 		resultados[i] = NULL;
@@ -502,17 +510,16 @@ void nlist(int sd2, char *param){
 
 }
 
-//TIENE CASI LO MISMO QUE DELDIR, POR LO QUE HAY QUE HACER UNA FUNCION PARA AMBAS
 void addDir(int sd2, char *param){
 	
 	int ret;
 	char buf[SIZE] = {'\0'};
 	errno = 0;
 
-	//las banderas permiten que el user tenga permiso de lectura, escritura y ejecucion, respectivamente
+	//LAS BANDERAS PERMITEN QUE EL USUARIO TENGA PERMISOS DE LECTURA, ESCRITURA Y EJECUCION RESPECTIVAMENTE
 	ret = mkdir(param,S_IRUSR | S_IWUSR | S_IXUSR);
 	
-	//le aviso al cliente que se creó la carpeta, o no
+	//LE AVISO AL CLIENTE QUE SE CREÓ (O NO) LA CARPETA
 	if (ret == -1) {
 	        switch (errno) {
         	    case EACCES:
@@ -582,17 +589,17 @@ void delDir(int sd2, char *param){
 
 }
 
-
+//ADMINISTRA LOS COMANDOS RECIBIDOS DEL CLIENTE
 void operate(int sd2, int c_port){
 
 	char oper[CMDSIZE]={'\0'}, param[BYTES]={'\0'};
 	char buf[BYTES]={'\0'};
 	char *token = NULL;
 	
-	//para el comando PORT
+	//VARIABLES PARA EL COMANDO PORT
 	struct sockaddr_in port_addr;
         int fh;
-	bool act_mode = false;
+	bool act_mode = false;			//1 si es modo activo, 0 si no
 	char buf_temp[BYTES]={'\0'};
 
 	while(true){
@@ -624,14 +631,17 @@ void operate(int sd2, int c_port){
 			act_mode = true;
 
 			fh = socket(AF_INET, SOCK_STREAM, 0);
-			printf("buffer: %s\n",buf_temp);
+			//printf("buffer: %s\n",buf_temp);
 			sscanf(buf_temp,"PORT %d,%d,%d,%d,%d,%d\r\n",&ip[0],&ip[1],&ip[2],&ip[3],&port[0],&port[1]);
+		        
 		        port_addr.sin_family=AF_INET;
 		        sprintf(ip_decimal, "%d.%d.%d.%d", ip[0], ip[1], ip[2],ip[3]);
-		        printf("IP is %s\n",ip_decimal);
+		        //printf("IP is %s\n",ip_decimal);
+		        
 		        port_addr.sin_addr.s_addr = inet_addr(ip_decimal);
       		  	port_dec = port[0]*256+port[1];
-       			printf("Port is %d\n",port_dec);
+       			//printf("Port is %d\n",port_dec);
+			
 			port_addr.sin_port = htons(port_dec);	
 	
 			//enviar mensaje de confirmacion (por canal de comandos)

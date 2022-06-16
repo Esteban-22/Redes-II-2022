@@ -13,14 +13,17 @@
 #include <sys/stat.h>
 #include <termios.h>
 
+//TAMAÑOS DEFINIDOS PARA ARREGLOS
 #define SIZE 100
 #define BYTES 512
 
+//COMANDO QUE LE ENVIA EL CLIENTE AL SERVIDOR
 #define PORT "PORT %d,%d,%d,%d,%d,%d\r\n"
 
-//para #ifdef
+//#ifdef
 #define DIRECTIVE
 
+//PROTOTIPOS
 int validar_nro(char*);
 int validar_ip(char*);
 void send_msg(int,char*,char*);
@@ -35,8 +38,9 @@ void delDir(int);
 bool checkIfFileExists(char *,int);
 void operate(int,int);
 
-//ruta dinamica para moverme en el servidor
+//RUTA DINAMICA (QUE CAMBIA) PARA MOVERME EN EL SERVIDOR
 char dpath[BYTES] = "/home/styvien/Documentos/REDES-II-2022/seqftp/dir_servidor/";
+
 
 int main(int argc, char *argv[]){
 
@@ -56,10 +60,10 @@ int main(int argc, char *argv[]){
 	memset(ip,'\0',sizeof(ip));       
 	strcpy(ip,argv[1]);
 
-	//Validamos el formato de la direccion IP (v4)
+	//VALIDAMOS EL FORMATO DE LA DIRECCION IP (v4)
     	validar_ip(ip);
 
-	//Guardamos el puerto en una variable
+	//GUARDAMOS EL PUERTO
 	port = atoi(argv[2]);
 
 	//OBTENEMOS LOS DATOS DEL SERVIDOR
@@ -87,23 +91,26 @@ int main(int argc, char *argv[]){
 	//QUEREMOS SABER NUESTRO PROPIO PUERTO
 	int cl_sz = sizeof(client);
 	getsockname(sd,(struct sockaddr*)&client,(socklen_t*)&cl_sz);
-	printf("My port is %d.\n",ntohs(client.sin_port));
-	printf("My IP address is %s.\n",inet_ntoa(client.sin_addr));
+	//printf("My port is %d.\n",ntohs(client.sin_port));
+	//printf("My IP address is %s.\n",inet_ntoa(client.sin_addr));
 	
 	int c_port = ntohs(client.sin_port);
 
-    	//LEEMOS EL MENSAJE EN EL FICHERO Y LO COPIAMOS EN EL BUFFER
+    	//LEEMOS EL MENSAJE Y LO COPIAMOS EN EL BUFFER
     	if(read(sd,buf,sizeof(buf)) == -1){
         	printf("Error: no se pudo leer el mensaje del servidor.\n");
         	exit(-1);
    	}
 
+   	#ifdef DIRECTIVE
+	#else
     	printf("Mensaje del servidor: %s\n",buf);
-	
-	//EL USUARIO DEBE LOGUEARSE
+	#endif
+
+	//EL USUARIO SE LOGUEA
 	authenticate(sd);
 	
-	//EL USUARIO PUEDE REALIZAR OPERACIONES
+	//EL USUARIO REALIZA OPERACIONES
 	operate(sd,c_port);
 	
 	//SE CIERRA EL FICHERO DEL LADO DEL CLIENTE
@@ -114,7 +121,7 @@ int main(int argc, char *argv[]){
 
 }
 
-//Funcion que se llama en validar_ip()
+//FUNCION QUE SE LLAMA EN validar_ip()
 int validar_nro(char *str){
 	while(*str){
 		if(!isdigit(*str)){ //si el char no es un nro, retorna 'false'
@@ -125,38 +132,38 @@ int validar_nro(char *str){
 	return 1;
 }
 
-//Funcion que chequea si la IP tiene un formato valido
+//FUNCION QUE CHEQUEA SI LA IP TIENE UN FORMATO VALIDO
 int validar_ip(char *ip){
 	int num, dot = 0;
 	char *ptr = NULL;
 	if(ip == NULL){
 		return 0;
 	}
-	ptr = strtok(ip,"."); //corta el string si encuentra un punto
+	ptr = strtok(ip,"."); 			//corta el string si encuentra un punto
 	if(ptr == NULL){
 		return 0;
 	}
 	while(ptr){
-		if(!validar_nro(ptr)){	//chequea si los nros entre puntos son validos
+		if(!validar_nro(ptr)){		//chequea si los nros entre puntos son validos
 			return 0;
 		}
-		num = atoi(ptr);	//convierte el string a un nro
+		num = atoi(ptr);		//convierte el string a un nro
 		if(num >= 0 && num <= 255){
-			ptr = strtok(NULL,"."); //
+			ptr = strtok(NULL,".");
 			if(ptr != NULL){
-				dot++;	// incrementa el contador de puntos
+				dot++;		// incrementa el contador de puntos
 			}
 		} else {
 			return 0;
 		}
 	}
 	if(dot != 3){
-		return 0;	//
+		return 0;
 	}
 	return 1;
 }
 
-//ENVIO LOS DATOS AL SERVIDOR
+//ENVIO COMANDOS AL SERVIDOR
 void send_msg(int sd, char *oper, char *param){
 	
 	char buf[SIZE] = {'\0'};
@@ -168,7 +175,6 @@ void send_msg(int sd, char *oper, char *param){
 		sprintf(buf, "%s\r\n",oper);
 	}
 	
-	//debo enviar el comando al servidor
 	if(write(sd,buf,sizeof(buf)) == -1){
 		printf("Error: no se pudo enviar el mensaje dentro de la funcion send_msg().\n");
                 exit(-1);
@@ -220,17 +226,21 @@ void authenticate(int sd){
 	                exit(-1);
         	}
 
+        	#ifdef DIRECTIVE
+		#else
 	        printf("Mensaje del servidor: %s\n",buf);
-	
+		#endif
+
 		memset(buf,0,sizeof(buf));
 
 		//ENVIO LA CONTRASEÑA AL SERVIDOR
 		printf("Contraseña: ");
 		
+		//OCULTO LA CONTRASEÑA
 		tcgetattr(fileno(stdin),&hidden_pass);
 		hidden_pass.c_lflag &= ~ECHO;
 		tcsetattr(fileno(stdin),0,&hidden_pass);
-		input = read_input();	//con termios oculto la password
+		input = read_input();
 		hidden_pass.c_lflag |= ECHO;
 		tcsetattr(fileno(stdin),0,&hidden_pass);
 
@@ -245,8 +255,11 @@ void authenticate(int sd){
                 	exit(-1);
 	        }
 
+	        #ifdef DIRECTIVE
+		#else
         	printf("Mensaje del servidor: %s\n",buf);
-		
+		#endif
+
 		token = strtok(buf, " ");
 
 		if(strcmp(token,"530") != 0){
@@ -264,30 +277,31 @@ void get(int sd, char *file_name, int c_port){
 	FILE *file = NULL;
 	char buf[BYTES] = {'\0'};
 
-	//para crear el canal de datos el cliente toma el rol del servidor
+	//PARA EL CANAL DE DATOS, EL CLIENTE TOMA EL ROL DE SERVIDOR
 	
-	int fh_c, fh_s;			//file handler del cliente y servidor
+	int fh_c, fh_s;			//file handler del cliente y del servidor
 	struct sockaddr_in client;
 	int p1, p2;			//para los args del PORT
 	int readed = 0;			//lo leido por el cliente cuando escribe en el archivo
 
-	//asignamos puerto e ip al socket
+	//ASIGNAMOS PUERTO E IP AL SOCKET
 	c_port+=1;
 	client.sin_family = AF_INET;
 	client.sin_port = htons(c_port);
 	client.sin_addr.s_addr = inet_addr("127.0.0.1");
 	
-	//abro el socket
+	//ABRO EL SOCKET
 	if((fh_c = socket(AF_INET,SOCK_STREAM,0)) < 0){
 		printf("Error de apertura del socket.\n");
 		exit(-1);
 	}
 	
-	//asociamos un puerto e ip al socket
+	//ASOCIAMOS PUERTO E IP AL SOCKET
 	if(bind(fh_c,(struct sockaddr*)&client,sizeof(client)) < 0){
+		
 		printf("Error de asociacion de socket (error en bind()).\n");
 		
-		//asigno un nuevo puerto con PORT
+		//SI HAY ERROR DE ASOCIACION, ASIGNO CON PORT
 		client.sin_port = htons(0);
 		if(bind(fh_c, (struct sockaddr*)&client,sizeof(client)) <0){
 			printf("Error al asignar un puerto al socket.\n");
@@ -297,17 +311,17 @@ void get(int sd, char *file_name, int c_port){
 		int cl_sz = sizeof(client);
         	getsockname(fh_c,(struct sockaddr*)&client,(socklen_t*)&cl_sz);
 	        c_port = ntohs(client.sin_port);
-		printf("My port is %d.\n",c_port);
+		//printf("My port is %d.\n",c_port);
 		
-		//obtenemos los puertos para los argumentos del PORT
+		//OBTENEMOS LOS PUERTOS PARA LOS ARGUMENTOS DE PORT
 		p1 = c_port % 256;
 		p2 = c_port - (p1*256);
 
-		//enviamos el nuevo puerto al servidor
+		//ENVIAMOS EL NUEVO PUERTO AL SERVIDOR
 		
 		sprintf(buf,PORT,127,0,0,1,p1,p2);
 		
-		if(write(sd,buf,sizeof(buf)) == -1){	//sd, porque le envio un comando
+		if(write(sd,buf,sizeof(buf)) == -1){		//uso el file handler sd, porque envio un comando
                         printf("Error: no se pudo enviar el mensaje.\n");
                         exit(-1);
                 }
@@ -318,13 +332,17 @@ void get(int sd, char *file_name, int c_port){
 			printf("Error: no se pudo leer el mensaje del servidor (port).\n");
                 	exit(-1);
         	}
+
+        	#ifdef DIRECTIVE
+		#else
 		printf("Mensaje del servidor: %s\n\n",buf);
+		#endif
+
 		memset(buf,0,sizeof(buf));
 
 	}
 	
-	//escuchamos
-	//al no ser bloqueante, puedo implementarla antes del RETR
+	//ESCUCHAMOS
 	if(listen(fh_c,1) < 0){
 		printf("No se ha podido levantar la atencion.\n");
 		exit(-1);
@@ -340,17 +358,19 @@ void get(int sd, char *file_name, int c_port){
                 exit(-1);
         }
 
+        #ifdef DIRECTIVE
+	#else
         printf("Mensaje del servidor: %s\n",buf);
+        #endif
+
         memset(buf,0,sizeof(buf));
 
-	//aceptamos la peticion de conexion del servidor, una vez comencemos la transferencia del archivo
+	//ACEPTAMOS LA PETICION DE CONEXION DEL SERVIDOR
 	unsigned int len = sizeof(client);
 	if((fh_s = accept(fh_c,(struct sockaddr*)&client,(socklen_t*)&len)) < 0){
 		printf("Error: no se pudo recibir al servidor.\n");
 		exit(-1);
 	}
-	
-	//cambiamos el file handler original por fh_s
 	
 	//RECIBIMOS EL ARCHIVO
 	file = fopen(file_name, "w");
@@ -368,6 +388,7 @@ void get(int sd, char *file_name, int c_port){
         		exit(-1);
         	}
         	fwrite(buf,1,readed,file);
+
 	}while(readed == BYTES);
 
 	//RECIBIMOS EL MENSAJE DE TRANSFERENCIA COMPLETA POR PARTE DEL SERVIDOR
@@ -376,7 +397,10 @@ void get(int sd, char *file_name, int c_port){
                 exit(-1);
         }
 
+        #ifdef DIRECTIVE
+	#else
 	printf("\nMensaje del servidor: %s\n\n",buf);
+	#endif
 
 	memset(buf,0,sizeof(buf));
 	
@@ -395,13 +419,18 @@ void quit(int sd){
                 printf("Error: no se pudo leer el mensaje del servidor.\n");
                 exit(-1);
         }
-	
+
+	#ifdef DIRECTIVE
+	#else
 	printf("Mensaje del servidor: %s\n",buf);
+	#endif
 
 	memset(buf,0,sizeof(buf));
 }
 
+//SIRVE PARA CHEQUEAR LA EXISTENCIA DE ARCHIVOS O CARPETAS
 bool checkIfFileExists(char *param,int bit){
+	
 	struct stat buffer;
 	
 	char temp[BYTES] = {'\0'};
@@ -439,6 +468,7 @@ bool checkIfFileExists(char *param,int bit){
 
 }
 
+//AYUDAS AL USUARIO
 void help(){
 
 	printf(	"\nDIRECTIVAS:\n"
@@ -461,7 +491,9 @@ void cd(int sd){
 		printf("Error: no pudo leerse la respuesta del servidor (cd).\n");
 	}
 
-	#ifdef CWD
+	printf("\n%s\n",dpath);
+
+	#ifdef DIRECTIVE
 	#else
 	printf("\nMensaje del servidor: %s\n",buf);
 	#endif
@@ -474,7 +506,6 @@ void dir(int sd){
 	
 	char buf[BYTES] = {'\0'};
 
-	printf("\n%s\n",dpath);
         send_msg(sd,"NLIST",dpath);
 	
 	if(read(sd,buf,sizeof(buf)) < 0){
@@ -519,7 +550,7 @@ void delDir(int sd){
         memset(buf,0,sizeof(buf));
 }
 
-
+//ADMINISTRA LOS COMANDOS QUE INGRESA EL USUARIO
 void operate(int sd, int c_port){
 
 	char *input = NULL; char *oper = NULL; char *param = NULL;
@@ -575,7 +606,6 @@ void operate(int sd, int c_port){
 			
 			strcat(dpath,param);
 			strcat(dpath,"/");
-			printf("dpath con param: %s",dpath);
 
                         addDir(sd);
 
@@ -589,8 +619,6 @@ void operate(int sd, int c_port){
 			strcpy(temp,dpath);
 
 			param = strtok(NULL, " ");
-			
-                        printf("param: %s\n",param);
 			
 			strcat(dpath,param);
 			strcat(dpath,"/");
